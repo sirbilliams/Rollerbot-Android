@@ -39,11 +39,11 @@ if(NOT TARGET SDL2::SDL2)
 endif()
 
 if(RB_TESTS AND NOT RB_ANDROID)
-  enable_testing()
+  include(CTest)
 endif()
 
 add_subdirectory(src/platform)
-foreach(lane assets scene brain audio)
+foreach(lane assets scene brain audio ui)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${lane}/CMakeLists.txt)
     add_subdirectory(src/${lane})
   endif()

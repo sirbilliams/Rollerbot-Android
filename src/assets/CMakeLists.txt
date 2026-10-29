@@ -1,0 +1,6 @@
+add_library(rb_assets STATIC Assets.cpp)
+target_compile_features(rb_assets PUBLIC cxx_std_17)
+target_include_directories(rb_assets PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+if(BUILD_TESTING)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../tests/assets ${CMAKE_CURRENT_BINARY_DIR}/tests)
+endif()

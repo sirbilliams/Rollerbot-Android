@@ -44,13 +44,17 @@ Decoded PRJs already contain those names; descriptors link hashed geometry and i
 A descriptor is a CRLF-terminated, pipe-delimited record starting with version 1.
 The exporter preserves every field without guessing its runtime meaning.
 
-The name-generation function is **unresolved**.
-Tests against path-like executable strings found no CRC32 matches, including case,
-basename, and separator variants. Zero-seeded multiply/add hashes with multipliers
-2, 3, 5, 7, 9, 17, 31, 33, 37, 39, 63, 65, 127, 129, 131, 137, 251, 257,
-and 65599 also found no matches in that candidate set.
-This does not prove filenames are path hashes: original paths may be absent.
-Do not substitute a guessed algorithm in a loader.
+The name builder at 0x441700 (alias 0x401d02) extracts a basename using
+slash, backslash, or colon separators, solely to compare it exactly with
+null_.wav. That exception returns the basename. Otherwise it hashes the FULL
+input, preserving case and separators. The preceding alias 0x401dc5 manages
+string storage; it does not normalize names. Hash 0x40d550 starts at zero:
+h = 31*h + signed_int8(byte), modulo 2^32, stopping at NUL, excluding the length
+prefix. Formatter 0x4600b0 emits eight uppercase hex digits, followed by .dat.
+The hash of the absent-resource marker '-' is 0000002D.dat; projects refer to
+that nonexistent file for objects without a model.
+The C++ store first resolves already published filenames, then tries this name
+rule. Filesystem case tolerance is separate from the byte-exact hash.
 
 ## Projects and state
 
@@ -147,3 +151,26 @@ This percentage measures container identification, not full semantic understandi
 The private export directory is outside this session's writable roots, so disk export
 and the requested private preview could not be produced here.
 No game bytes or converted assets were placed in the repository. No commit was made.
+
+## C++17 API and validation
+
+src/assets/Assets.h publishes owning records and the rb_assets static library.
+Object fields 0/1/2 are name/model/sound, 4–6 are position, and 35 is the numeric
+type discriminator. Other fields remain lossless strings. Metadata after the
+objects precedes @N brain source blocks; source lines and indices are retained.
+COL entries remain signed DWORDs. Mesh output is geometry only: frame transforms,
+materials, UVs, custom geometry scaling, and d30 camera semantics remain unresolved.
+
+Some WAV RIFF sizes overstate EOF: one declares 44 extra bytes. The decoder
+bounds RIFF to physical EOF, requiring every chunk payload to fit and PCM frames
+to align. Sound exposes PCM format, channels, rate, bit depth, alignment, samples.
+
+Configure RB_GAME_DIR to the private installation (default .game), then run:
+`timeout 180 ctest --test-dir BUILD --output-on-failure`.
+Validation covers 14 PRJ/COL pairs, 344 DATs, 156 images, 85 meshes, 61 sounds,
+and 4,428 non-sentinel project/descriptor references. It verifies 276 unique
+filename strings from the executable and decoded projects with an independent
+signed-byte hash and hexadecimal round trip, plus five malformed-input cases.
+These hash checks do not recover missing original names for every hashed DAT.
+Descriptor/state/camera bytes remain partially opaque; container coverage does
+not imply complete semantic decoding. Retail bytes stay outside the repository.
