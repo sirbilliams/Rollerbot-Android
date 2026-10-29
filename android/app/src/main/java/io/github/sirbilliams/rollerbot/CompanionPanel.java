@@ -25,7 +25,31 @@ final class CompanionPanel {
 
     boolean isEnabled() { return pres != null; }
 
+    private DisplayManager.DisplayListener listener;
+
     void resume() {
+        DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
+        if (dm != null && listener == null) {
+            // The bottom screen can appear (or go) after the game starts: pick it up when it does.
+            listener = new DisplayManager.DisplayListener() {
+                @Override public void onDisplayAdded(int id) { show(); }
+                @Override public void onDisplayChanged(int id) { if (pres == null) show(); }
+                @Override public void onDisplayRemoved(int id) {
+                    if (pres != null && pres.getDisplay() != null && pres.getDisplay().getDisplayId() == id) { dropPresentation(); }
+                }
+            };
+            dm.registerDisplayListener(listener, new Handler(Looper.getMainLooper()));
+        }
+        show();
+    }
+
+    private void dropPresentation() {
+        if (view != null) view.stop();
+        if (pres != null) { try { pres.dismiss(); } catch (RuntimeException ignored) { } pres = null; }
+        view = null;
+    }
+
+    private void show() {
         if (pres != null) return;
         DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
         Display d = BottomScreen.find(act, dm, "resume");
@@ -46,9 +70,9 @@ final class CompanionPanel {
     }
 
     void pause() {
-        if (view != null) view.stop();
-        if (pres != null) { try { pres.dismiss(); } catch (RuntimeException ignored) { } pres = null; }
-        view = null;
+        DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
+        if (dm != null && listener != null) { dm.unregisterDisplayListener(listener); listener = null; }
+        dropPresentation();
     }
 
     /**

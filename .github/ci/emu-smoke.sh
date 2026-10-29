@@ -10,6 +10,7 @@ shot() { adb exec-out screencap -p > "$OUT/$1.png" || echo "screencap $1 failed"
 alive() { adb shell pidof "$1" > /dev/null 2>&1; }   # $1 = process name
 key() { adb shell input keyevent "$1"; sleep 2; }
 
+adb shell settings put secure immersive_mode_confirmations confirmed   # no 'Viewing full screen' hint in shots
 adb logcat -c
 adb logcat -v threadtime > "$OUT/logcat-live.txt" 2>&1 &
 LOGPID=$!
@@ -28,6 +29,13 @@ done
 key KEYCODE_DPAD_CENTER; shot launcher-enter
 key KEYCODE_BACK
 alive "$PKG" || fail "app process died during launcher navigation"
+
+# The pad must have moved the launcher: LauncherView logs "launcher page N" on each page change
+sleep 1; adb logcat -d -s Rollerbot:I > "$OUT/launcher-nav.txt"
+PAGES=$(grep -c "launcher page" "$OUT/launcher-nav.txt" || true)
+[ "${PAGES:-0}" -ge 3 ] || fail "DPAD did not change launcher pages ($PAGES page changes logged, want >= 3)"
+# and the screenshots differ (pages have different eras/art)
+[ "$(md5sum "$OUT"/launcher-page-*-down.png | awk '{print $1}' | sort -u | wc -l)" -ge 3 ] || fail "launcher screenshots look identical"
 
 # 2. Game activity with no game data: must show the stub/import prompt, not crash
 adb shell am start -W -n "$PKG/.RollerActivity" || fail "game activity failed to start (not exported? built without -PemuAbi?)"

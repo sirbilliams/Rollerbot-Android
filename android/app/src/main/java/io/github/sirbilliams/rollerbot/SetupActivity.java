@@ -36,6 +36,8 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         refresh();
     }
 
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) view.requestFocus(); }
+
     @Override
     protected void onResume() {
         super.onResume();

@@ -100,6 +100,7 @@ final class LauncherView extends View {
     int row() { return row; }
 
     private void switchPage(int p) {
+        android.util.Log.i("Rollerbot", "launcher page " + p);   // the CI smoke test checks the pad moved the pages
         prevEra = era; page = p; era = p; wipe = 0; panelIn = 0; bounceT = 0;
         row = firstEnabled(p);
     }

@@ -97,6 +97,9 @@ final class BottomScreen {
         if (d.getDisplayId() == Display.DEFAULT_DISPLAY) return false;
         if (!d.isValid()) return false;
         if ((d.getFlags() & Display.FLAG_PRIVATE) != 0) return false;       // another app's virtual display
+        // The Thor's panel size is accepted whatever the type says: that is also how the CI emulator's simulated
+        // second display (overlay_display_devices 1240x1080) reaches the companion. A cast display is never that size.
+        if (thorBottomSize(d)) return true;
         if (type == TYPE_WIFI || type == TYPE_OVERLAY || type == TYPE_VIRTUAL) return false;
         String name = d.getName() != null ? d.getName().toLowerCase(Locale.ROOT) : "";
         String[] cast = { "wifi", "wi-fi", "wireless", "miracast", "cast", "chromecast", "mirror",

@@ -24,4 +24,8 @@ fetch "$UNSHIELD_REPO" "$UNSHIELD_REF" "$UNSHIELD_COMMIT" "$ROOT/android/app/jni
 JAVA="$ROOT/android/app/src/main/java/org/libsdl/app"
 rm -rf "$JAVA"; mkdir -p "$JAVA"
 cp "$DEST/android-project/app/src/main/java/org/libsdl/app/"*.java "$JAVA/"
-echo "ok   SDL Java glue"
+# Android 14 (targetSdk 34) throws from registerReceiver without RECEIVER_(NOT_)EXPORTED, which kills SDL's HID
+# gamepad support ("hid_init threw an exception"): pass RECEIVER_EXPORTED (2) on API 33+ as newer SDL does.
+sed -i -E 's/mContext\.registerReceiver\((m[A-Za-z]+), filter\);/if (android.os.Build.VERSION.SDK_INT >= 33) mContext.registerReceiver(\1, filter, 2); else mContext.registerReceiver(\1, filter);/' "$JAVA/HIDDeviceManager.java"
+grep -q "SDK_INT >= 33" "$JAVA/HIDDeviceManager.java" || { echo "ERROR: HID registerReceiver patch did not apply" >&2; exit 1; }
+echo "ok   SDL Java glue (HID receiver patched)"

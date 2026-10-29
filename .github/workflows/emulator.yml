@@ -75,5 +75,5 @@ jobs:
           {
             echo "### Emulator smoke: job status \`${{ job.status }}\`"
             echo "Screenshots + logcat are in the \`emulator-smoke\` artifact."
-            [ -s smoke/crash-lines.txt ] && { echo '```'; head -20 smoke/crash-lines.txt; echo '```'; }
+            if [ -s smoke/crash-lines.txt ]; then echo '```'; head -20 smoke/crash-lines.txt; echo '```'; fi
           } >> "$GITHUB_STEP_SUMMARY"
