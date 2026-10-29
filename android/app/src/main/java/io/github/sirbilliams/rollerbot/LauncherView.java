@@ -36,15 +36,14 @@ final class LauncherView extends View {
     }
 
     // stage geometry (1920 x 1080)
-    private static final float NAV_X = 110, NAV_Y = 330, NAV_W = 600, NAV_H = 104, NAV_GAP = 30;
     private float panX = 800, panY = 250, panW = 1010, rowH = 74, rowGap = 14;
-    // card metrics: the classic layout, or the compact ones the two centred layouts use
+    // card metrics (compact: both layouts are centred)
     private float headSz = 56, headY = 80, linesY = 130, lineStep = 40, chipY = 120, chipH = 130, dotY = 295, playRowsY = 330, minH = 440;
-    private int maxLines = 99;
-    /** 0 = the original left/right layout, 1 = A (tabs on top, one card), 2 = B (stack of buttons, the card replaces it). */
-    private int layout;
+    /** 1 = A (tabs on top, one card), 2 = B (stack of buttons, the card replaces it). */
+    private int layout = 1;
     private float open;   // layout B: 0 = the stack, 1 = the card
     private final RectF backR = new RectF();
+    private int scroll;   // first visible row when the list does not fit the card
     private final String[][] rawLines = { {}, {}, {}, {} };
     private static final float GROUND = 934;
 
@@ -83,7 +82,7 @@ final class LauncherView extends View {
     }
 
     // ---- model ----------------------------------------------------------------------------------------------
-    void setRows(int p, Row[] rs) { rows[p] = rs; if (p == page && row >= rs.length) row = Math.max(0, rs.length - 1); invalidate(); }
+    void setRows(int p, Row[] rs) { rows[p] = rs; if (p == page) { if (row >= rs.length) row = Math.max(0, rs.length - 1); keepVisible(); } invalidate(); }
     void setLines(int p, String head, String... ls) {
         heading[p] = head;
         rawLines[p] = ls;
@@ -96,22 +95,18 @@ final class LauncherView extends View {
             String cur = "";
             for (String wd : l.split(" ")) {
                 String nx = cur.isEmpty() ? wd : cur + " " + wd;
-                if (!cur.isEmpty() && toy.measure(nx, layout == 0 ? 30 : 28) > panW - 120) { out.add(cur); cur = wd; } else cur = nx;
+                if (!cur.isEmpty() && toy.measure(nx, 28) > panW - 120) { out.add(cur); cur = wd; } else cur = nx;
             }
             out.add(cur);
         }
-        while (out.size() > (p == 2 ? maxLines : 5)) out.remove(out.size() - 1);
         lines[p] = out.toArray(new String[0]);
         invalidate();
     }
 
-    /** Layout variants for review: 0 classic, 1 = A (tabs + card), 2 = B (button stack, card replaces it). */
+    /** Menu layout: 1 = A (tabs + card), 2 = B (button stack; the card replaces it). */
     void setLayout(int l) {
-        layout = Math.max(0, Math.min(2, l));
-        if (layout == 0) { panX = 800; panY = 250; panW = 1010; rowH = 74; rowGap = 14; headSz = 56; headY = 80; linesY = 130; lineStep = 40; chipY = 120; chipH = 130; dotY = 295; playRowsY = 330; minH = 440; maxLines = 99; }
-        else {
-            panX = 385; panW = 1150; panY = layout == 1 ? 358 : 292; rowH = 60; rowGap = 10; headSz = 44; headY = 62; linesY = 96; lineStep = 38; chipY = 92; chipH = 108; dotY = 236; playRowsY = 270; minH = 300; maxLines = 2;
-        }
+        layout = l == 2 ? 2 : 1;
+        panX = 385; panW = 1150; panY = layout == 1 ? 358 : 292; rowH = 60; rowGap = 10; headSz = 44; headY = 62; linesY = 96; lineStep = 38; chipY = 92; chipH = 108; dotY = 236; playRowsY = 270; minH = 300;
         for (int i = 0; i < 4; i++) wrap(i);
         open = col == 1 ? 1 : 0;
         invalidate();
@@ -128,7 +123,7 @@ final class LauncherView extends View {
     private void switchPage(int p) {
         android.util.Log.i("Rollerbot", "launcher page " + p);   // the CI smoke test checks the pad moved the pages
         prevEra = era; page = p; era = p; wipe = 0; panelIn = 0; bounceT = 0;
-        row = firstEnabled(p);
+        row = firstEnabled(p); scroll = 0;
     }
     private int firstEnabled(int p) { for (int i = 0; i < rows[p].length; i++) if (rows[p][i].enabled) return i; return 0; }
 
@@ -139,7 +134,7 @@ final class LauncherView extends View {
         if (col == 0) { int p = Math.max(0, Math.min(PAGES.length - 1, page + dy)); if (p != page) switchPage(p); return; }
         Row[] rs = rows[page];
         int i = row;
-        for (int n = 0; n < rs.length; n++) { i += dy; if (i < 0 || i >= rs.length) return; if (rs[i].enabled) { row = i; bounceT = 0.25f; return; } }
+        for (int n = 0; n < rs.length; n++) { i += dy; if (i < 0 || i >= rs.length) return; if (rs[i].enabled) { row = i; bounceT = 0.25f; keepVisible(); return; } }
     }
     private void side(int dx) {
         if (layout == 1 && col == 0) { int p = Math.max(0, Math.min(PAGES.length - 1, page + dx)); if (p != page) switchPage(p); return; }   // A: Left / Right move the tabs
@@ -190,8 +185,7 @@ final class LauncherView extends View {
     /** The page button i: left column (classic), tab row (A) or centred stack (B). */
     private void navRect(int i, RectF o) {
         if (layout == 1) { float w = 330, g = 24, x0 = 960 - (4 * w + 3 * g) / 2; o.set(x0 + i * (w + g), 250, x0 + i * (w + g) + w, 330); }
-        else if (layout == 2) { float h = 100, g = 24; o.set(660, 308 + i * (h + g), 1260, 308 + i * (h + g) + h); }
-        else o.set(NAV_X, NAV_Y + i * (NAV_H + NAV_GAP), NAV_X + NAV_W, NAV_Y + i * (NAV_H + NAV_GAP) + NAV_H);
+        else { float h = 100, g = 24; o.set(660, 308 + i * (h + g), 1260, 308 + i * (h + g) + h); }
     }
     private boolean cardHidden() { return layout == 2 && open < 0.5f; }
     private boolean stackHidden() { return layout == 2 && open > 0.5f; }
@@ -203,8 +197,8 @@ final class LauncherView extends View {
     private int hitRow(float x, float y) {
         if (cardHidden()) return -1;
         float top = rowsTop(page);
-        for (int i = 0; i < rows[page].length; i++) {
-            float ry = top + i * (rowH + rowGap);
+        for (int i = scroll; i < Math.min(rows[page].length, scroll + vis()); i++) {
+            float ry = top + (i - scroll) * (rowH + rowGap);
             if (x >= panX + 40 && x <= panX + panW - 40 && y >= ry && y <= ry + rowH) return i;
         }
         return -1;
@@ -240,11 +234,19 @@ final class LauncherView extends View {
     }
 
     // ---- drawing --------------------------------------------------------------------------------------------
-    private float panH() { return Math.max(minH, rowsTop(page) - panY + rows[page].length * (rowH + rowGap) + 26); }
+    /** Rows that fit between the card's text and the ground line (the list scrolls when there are more). */
+    private int vis() {
+        int n = rows[page].length;
+        int fit = (int) ((GROUND - 8 - rowsTop(page) - 24) / (rowH + rowGap));
+        return Math.max(1, Math.min(n, fit));
+    }
+    private void keepVisible() { int vs = vis(); if (row < scroll) scroll = row; if (row >= scroll + vs) scroll = row - vs + 1; scroll = Math.max(0, Math.min(scroll, Math.max(0, rows[page].length - vs))); }
+
+    private float panH() { return Math.max(minH, rowsTop(page) - panY + vis() * (rowH + rowGap) + 26); }
 
     private float rowsTop(int p) {
-        if (p == 0) return panY + playRowsY;
-        return panY + linesY + lines[p].length * lineStep + (progress >= 0 && p == 1 ? 56 : 0) + (layout == 0 ? 16 : 26);
+        if (p == 0) return panY + playRowsY + lines[0].length * 34 + 10;
+        return panY + linesY + lines[p].length * lineStep + (progress >= 0 && p == 1 ? 56 : 0) + 26;
     }
 
     @Override protected void onDraw(Canvas c) {
@@ -276,7 +278,7 @@ final class LauncherView extends View {
             pp.setColor(Toy.alpha(0xffffffff, 0.8f * (1 - Math.abs(wipe - 0.5f) * 1.2f))); c.drawRect(wx - 5, 0, wx + 5, worldH, pp);
             pp.setColor(Toy.alpha(0xffffffff, 0.22f * (1 - Math.abs(wipe - 0.5f)))); c.drawRect(wx - 40, 0, wx, worldH, pp);
         } else toy.world(c, era, worldW, worldH, gy, t);
-        toy.floaters(c, worldW, gy, t, layout != 0);
+        toy.floaters(c, worldW, gy, t, true);
 
         c.save();
         c.translate(ox, oy);
@@ -287,49 +289,31 @@ final class LauncherView extends View {
             if (e > 0.02f) { c.save(); c.translate((1 - e) * 1500, 0); drawPanel(c); c.restore(); }
         } else {
             drawNav(c);
-            float slide = (1 - Toy.ease(panelIn)) * (layout == 0 ? 70 : 0), lift = layout == 0 ? 0 : (1 - Toy.ease(panelIn)) * 26;
-            c.save(); c.translate(slide, lift); drawPanel(c); c.restore();
+            float lift = (1 - Toy.ease(panelIn)) * 26;
+            c.save(); c.translate(0, lift); drawPanel(c); c.restore();
         }
         c.restore();
 
         // the ball: rolls in place on the ground (the world scrolls past), hops on every action
         float hop = bounceT < 0.6f ? (float) Math.sin(bounceT / 0.6f * Math.PI) * 190 : 0;
-        float bx = layout == 0 ? ox + 1530 : ox + 150, br = 66;
+        float bx = ox + 150, br = 66;
         toy.ball(c, bx, gy + 56 - br - hop + br * 0.9f - 20, br, spin, gy + 62);
-        if (layout != 0) {   // a small toy stack in the opposite margin keeps the bottom balanced
-            toy.cube(c, ox + 1790, gy + 4, 40, Toy.TOYS[1], 0.4f);
-            toy.cube(c, ox + 1730, gy + 4, 30, Toy.TOYS[5], 1.1f);
-        }
+        toy.cube(c, ox + 1790, gy + 4, 40, Toy.TOYS[1], 0.4f);   // a small toy stack in the opposite margin keeps the bottom balanced
+        toy.cube(c, ox + 1730, gy + 4, 30, Toy.TOYS[5], 1.1f);
         drawHints(c);
         c.restore();
         postInvalidateOnAnimation();
     }
 
     private void drawTitle(Canvas c) {
-        if (layout != 0) {
-            float sz = 132;
-            float w = toy.measure("ROLLERBOT", sz) + sz * 0.01f * 9;
-            toy.wordmark(c, "ROLLERBOT", 960 - w / 2, 148, sz, t);
-            String s2 = "A TIME JOURNEY";
-            float bw = toy.measure(s2, 38) + 64;
-            r.set(960 - bw / 2, 168, 960 + bw / 2, 220);
-            toy.block(c, r, 16, 7, 0xffff9a1f, false);
-            toy.text(c, s2, 960, 206, 38, 0xffffffff, 0);
-            return;
-        }
-        toy.wordmark(c, "ROLLERBOT", NAV_X - 6, 190, 160, t);
-        String s = "A TIME JOURNEY";
-        float bw = toy.measure(s, 44) + 70;
-        r.set(NAV_X, 222, NAV_X + bw, 282);
-        toy.block(c, r, 18, 8, 0xffff9a1f, false);
-        toy.text(c, s, NAV_X + 35, 266, 44, 0xffffffff, -1);
-        // era chips
-        pp.setStyle(Paint.Style.FILL); pp.setShader(null); pp.setColor(Toy.alpha(0xff0b1030, 0.55f)); r.set(NAV_X + bw + 14, 236, NAV_X + bw + 30 + 4 * 46 - 10, 268); c.drawRoundRect(r, 16, 16, pp);
-        for (int i = 0; i < 4; i++) {
-            float x = NAV_X + bw + 30 + i * 46;
-            pp.setStyle(Paint.Style.FILL); pp.setColor(i == era ? 0xffffffff : Toy.alpha(0xffffffff, 0.35f));
-            c.drawCircle(x, 252, i == era ? 13 : 9, pp);
-        }
+        float sz = 132;
+        float w = toy.measure("ROLLERBOT", sz) + sz * 0.01f * 9;
+        toy.wordmark(c, "ROLLERBOT", 960 - w / 2, 148, sz, t);
+        String s2 = "A TIME JOURNEY";
+        float bw = toy.measure(s2, 38) + 64;
+        r.set(960 - bw / 2, 168, 960 + bw / 2, 220);
+        toy.block(c, r, 16, 7, 0xffff9a1f, false);
+        toy.text(c, s2, 960, 206, 38, 0xffffffff, 0);
     }
 
     private void icon(Canvas c, int i, float cx, float cy, float s, int col) {
@@ -354,7 +338,6 @@ final class LauncherView extends View {
             float x = r.left, y = r.top, w = r.width(), h = r.height(), s = navScale[i], cx = x + w / 2, cy = y + h / 2;
             boolean sel = i == page;
             c.save();
-            if (layout == 0) c.translate(sel ? 16 * (s - 1) / 0.07f * 0.7f : 0, 0);
             c.translate(cx, cy); c.scale(s, s); c.translate(-cx, -cy);
             int face = sel ? PAGE_COL[i] : Toy.shade(PAGE_COL[i], -0.12f);
             toy.block(c, r, layout == 1 ? 40 : 30, sel ? 12 : 8, face, sel && col == 0);
@@ -378,25 +361,20 @@ final class LauncherView extends View {
         pp.setColor(Toy.shade(PAGE_COL[page], -0.35f)); r2.set(r.left, r.top + 10, r.right, r.bottom + 10); c.drawRoundRect(r2, 44, 44, pp);
         pp.setColor(0xfb152a5c); c.drawRoundRect(r, 44, 44, pp);
         pp.setStyle(Paint.Style.STROKE); pp.setStrokeWidth(8); pp.setColor(PAGE_COL[page]); c.drawRoundRect(r, 44, 44, pp);
-        pp.setStyle(Paint.Style.FILL); pp.setColor(Toy.alpha(0xffffffff, 0.07f)); r2.set(r.left + 14, r.top + 14, r.right - 14, r.top + (layout == 0 ? 100 : 84)); c.drawRoundRect(r2, 32, 32, pp);
-        if (layout == 0) {
-            toy.text(c, heading[page], panX + 48, panY + headY, headSz, 0xffffffff, -1);
-            toy.text(c, Toy.ERA_NAMES[page] + " era", panX + panW - 48, panY + 76, 30, Toy.alpha(PAGE_COL[page], 1f), 1);
-        } else {
-            toy.text(c, heading[page], panX + panW / 2, panY + headY, headSz, 0xffffffff, 0);
-            if (layout == 2) {   // Back pill, touch target and a reminder of the B button
-                backR.set(panX + 34, panY + 20, panX + 190, panY + 76);
-                toy.block(c, backR, 24, 6, 0xffff9a1f, false);
-                toy.text(c, "Back", backR.centerX() + 16, backR.centerY() + 12, 32, 0xffffffff, 0);
-                pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffffff);
-                tri.reset(); tri.moveTo(backR.left + 40, backR.centerY() - 11); tri.lineTo(backR.left + 40, backR.centerY() + 11); tri.lineTo(backR.left + 24, backR.centerY()); tri.close(); c.drawPath(tri, pp);
-            }
+        pp.setStyle(Paint.Style.FILL); pp.setColor(Toy.alpha(0xffffffff, 0.07f)); r2.set(r.left + 14, r.top + 14, r.right - 14, r.top + 84); c.drawRoundRect(r2, 32, 32, pp);
+        toy.text(c, heading[page], panX + panW / 2, panY + headY, headSz, 0xffffffff, 0);
+        if (layout == 2) {   // Back pill, touch target and a reminder of the B button
+            backR.set(panX + 34, panY + 20, panX + 190, panY + 76);
+            toy.block(c, backR, 24, 6, 0xffff9a1f, false);
+            toy.text(c, "Back", backR.centerX() + 16, backR.centerY() + 12, 32, 0xffffffff, 0);
+            pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffffff);
+            tri.reset(); tri.moveTo(backR.left + 40, backR.centerY() - 11); tri.lineTo(backR.left + 40, backR.centerY() + 11); tri.lineTo(backR.left + 24, backR.centerY()); tri.close(); c.drawPath(tri, pp);
         }
 
         if (page == 0) drawPlayCard(c);
         else {
             float y = panY + linesY;
-            for (String l : lines[page]) { toy.text(c, l, layout == 0 ? panX + 56 : panX + panW / 2, y + 20, layout == 0 ? 30 : 28, 0xffd6e2ff, layout == 0 ? -1 : 0); y += lineStep; }
+            for (String l : lines[page]) { toy.text(c, l, panX + panW / 2, y + 20, 28, 0xffd6e2ff, 0); y += lineStep; }
             if (page == 1 && progress >= 0) {
                 y += 8;
                 r2.set(panX + 56, y, panX + panW - 56, y + 34);
@@ -421,6 +399,8 @@ final class LauncherView extends View {
             toy.text(c, cap[i], x + cw / 2, y + 38 * k, 24, Toy.alpha(0xffffffff, 0.8f), 0);
             toy.text(c, val[i], x + cw / 2, y + 100 * k, 56 * (0.6f + 0.4f * k), cols[i] == 0xffffd81f ? 0xffffe46a : 0xffffffff, 0);
         }
+        float ly = panY + dotY + 50;   // the language line(s) under the level dots
+        for (String l : lines[0]) { toy.text(c, l, panX + panW / 2, ly, 26, 0xffd6e2ff, 0); ly += 34; }
         // one dot per level: lit = unlocked, ring = the one that will be played
         float dy = panY + dotY;
         int n = Math.max(total, 1);
@@ -436,9 +416,12 @@ final class LauncherView extends View {
     private void drawRows(Canvas c) {
         Row[] rs = rows[page];
         float top = rowsTop(page);
-        for (int i = 0; i < rs.length; i++) {
+        int vs = vis();
+        if (scroll > 0) { pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffe46a); tri.reset(); tri.moveTo(panX + panW - 70, top - 8); tri.lineTo(panX + panW - 40, top - 8); tri.lineTo(panX + panW - 55, top - 26); tri.close(); c.drawPath(tri, pp); }
+        if (scroll + vs < rs.length) { pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffe46a); float by = top + vs * (rowH + rowGap) - 2; tri.reset(); tri.moveTo(panX + panW - 70, by); tri.lineTo(panX + panW - 40, by); tri.lineTo(panX + panW - 55, by + 18); tri.close(); c.drawPath(tri, pp); }
+        for (int i = scroll; i < Math.min(rs.length, scroll + vs); i++) {
             Row rw = rs[i];
-            float y = top + i * (rowH + rowGap), s = rowScale[Math.min(i, rowScale.length - 1)];
+            float y = top + (i - scroll) * (rowH + rowGap), s = rowScale[Math.min(i, rowScale.length - 1)];
             boolean sel = col == 1 && i == row;
             float cx = panX + panW / 2, cy = y + rowH / 2;
             c.save(); c.translate(cx, cy); c.scale(s, s); c.translate(-cx, -cy);
@@ -467,7 +450,7 @@ final class LauncherView extends View {
                 : col == 0 ? "Up / Down  choose     Right or A  open     B  quit"
                 : "Up / Down  choose     Left / Right  change     A  select     B  back";
         float w = toy.measure(s, 28) + 56;
-        float hx = layout == 0 ? NAV_X : 960 - w / 2;
+        float hx = 960 - w / 2;
         r.set(hx, GROUND + 28, hx + w, GROUND + 80);
         pp.setStyle(Paint.Style.FILL); pp.setShader(null); pp.setColor(Toy.alpha(0xff0b1030, 0.72f));
         c.drawRoundRect(r, 26, 26, pp);

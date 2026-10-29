@@ -31,7 +31,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         view = new LauncherView(this, this);
-        view.setLayout(PortPrefs.layout(this));
+        view.setLayout(PortPrefs.layout(this) + 1);
         setContentView(view);
         view.requestFocus();
         refresh();
@@ -47,12 +47,6 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
 
     // The view takes keys and sticks itself; these make sure they reach it even when focus drifts.
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
-        int kc = e.getKeyCode();
-        if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0 && (kc == KeyEvent.KEYCODE_BUTTON_L1 || kc == KeyEvent.KEYCODE_BUTTON_R1 || kc == KeyEvent.KEYCODE_L)) {
-            PortPrefs.setLayout(this, PortPrefs.layout(this) + (kc == KeyEvent.KEYCODE_BUTTON_L1 ? -1 : 1));   // temporary: switch layouts for review
-            view.setLayout(PortPrefs.layout(this));
-            return true;
-        }
         if (e.getAction() == KeyEvent.ACTION_DOWN && view.onKeyDown(e.getKeyCode(), e)) return true;
         return e.getAction() == KeyEvent.ACTION_UP && isHandled(e.getKeyCode()) || super.dispatchKeyEvent(e);
     }
@@ -128,7 +122,8 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
             new LauncherView.Row("Controls", PortPrefs.CONTROLS[PortPrefs.controls(this)], true, true),
             new LauncherView.Row("Bottom screen", PortPrefs.companion(this) ? "On" : "Off", true, true),
             new LauncherView.Row("Volume", PortPrefs.volume(this) + "%", true, true),
-            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[active], have && countOf(inst) > 1, true) });
+            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[active], have && countOf(inst) > 1, true),
+            new LauncherView.Row("Menu layout", PortPrefs.LAYOUTS[PortPrefs.layout(this)], true, true) });
 
         view.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handhelds and desktop.",
                 "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version " + version());
@@ -179,6 +174,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         else if (page == 2 && row == 1) PortPrefs.setControls(this, PortPrefs.controls(this) + dir);
         else if (page == 2 && row == 2) PortPrefs.setCompanion(this, !PortPrefs.companion(this));
         else if (page == 2 && row == 3) PortPrefs.setVolume(this, PortPrefs.volume(this) + 10 * dir);
+        else if (page == 2 && row == 5) { PortPrefs.setLayout(this, PortPrefs.layout(this) + dir); view.setLayout(PortPrefs.layout(this) + 1); }
         else if (page == 2 && row == 4) {      // Game language: only the installed sets, no re-import
             boolean[] inst = GameImporter.installed(this);
             int n = PortPrefs.LANG_DIRS.length, cur = GameImporter.activeLang(this);

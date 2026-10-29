@@ -17,10 +17,11 @@ public final class RenderLauncher {
   LauncherView v = new LauncherView(new Context(), none); v.setTestSize(1920, 1080);
   v.setPlay(true, 5, 14775, 3200, 5, 14, 5);
   v.setRows(0, new LauncherView.Row[] { new LauncherView.Row("Continue", "Level 5", true, false), new LauncherView.Row("New game", "from the title", true, false), new LauncherView.Row("Play level", "5", true, true) });
+  v.setLines(0, "Play", "Language: EN (detected)  (change in Settings)");
   v.setLines(1, "Import your game", "Game found. Importing again replaces it.", "Every language on the disc is installed; the one chosen below opens first.");
   v.setRows(1, new LauncherView.Row[] { new LauncherView.Row("Import from disc folder", "", true, false), new LauncherView.Row("Import from image or .zip", "", true, false), new LauncherView.Row("Preferred language", "EN", true, true), new LauncherView.Row("Remove imported game", "", true, false) });
-  v.setLines(2, "Settings", "Move: D-pad or left stick     Jump: A or X", "Menu: Start (pause, restart, level, screen)", "Keyboard: arrows, Enter, Space, Esc");
-  v.setRows(2, new LauncherView.Row[] { new LauncherView.Row("Widescreen", "Fill", true, true), new LauncherView.Row("Controls", "A and X jump", true, true), new LauncherView.Row("Bottom screen", "On", true, true), new LauncherView.Row("Volume", "100%", true, true), new LauncherView.Row("Game language", "EN", true, true) });
+  v.setLines(2, "Settings", "Move: D-pad or left stick     Jump: A and X jump", "Start opens the game menu: resume, restart, level, screen.", "Changes apply the next time the game starts.");
+  v.setRows(2, new LauncherView.Row[] { new LauncherView.Row("Widescreen", "Fill", true, true), new LauncherView.Row("Controls", "A and X jump", true, true), new LauncherView.Row("Bottom screen", "On", true, true), new LauncherView.Row("Volume", "100%", true, true), new LauncherView.Row("Game language", "EN", true, true), new LauncherView.Row("Menu layout", "Tabs", true, true) });
   v.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handheld and desktop.", "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version 0.55 (October 2026)");
   v.showPage(page);
   return v;
@@ -42,7 +43,7 @@ public final class RenderLauncher {
    public void select(int p, int r) { got[0] = p * 10 + r + 100; }
    public void adjust(int p, int r, int d) { got[1] = p * 100 + r * 10 + d; }
    public void quit() { quit[0] = true; } };
-  LauncherView v = new LauncherView(new Context(), act); v.setTestSize(1920, 1080);
+  LauncherView v = new LauncherView(new Context(), act); v.setTestSize(1920, 1080); v.setLayout(2);
   v.setRows(0, new LauncherView.Row[] { new LauncherView.Row("a", "", true, false), new LauncherView.Row("b", "", false, false), new LauncherView.Row("c", "5", true, true) });
   v.setRows(2, new LauncherView.Row[] { new LauncherView.Row("w", "Fill", true, true) });
   clock = 1000; SystemClock.testNow = clock; v.drawForTest(new Canvas(Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888)));
@@ -62,7 +63,7 @@ public final class RenderLauncher {
   v.onGenericMotionEvent(rel); v.onGenericMotionEvent(push); check(v.page() == 2, "released then pushed");
   // touch on the 'Settings' nav button (stage coordinates, view is exactly 1920x1080)
   v.showPage(0);
-  v.onTouchEvent(new android.view.MotionEvent(0, 300, 330 + 2 * 134 + 40, 0, 0)); v.onTouchEvent(new android.view.MotionEvent(1, 300, 330 + 2 * 134 + 40, 0, 0));
+  v.onTouchEvent(new android.view.MotionEvent(0, 900, 308 + 2 * 124 + 40, 0, 0)); v.onTouchEvent(new android.view.MotionEvent(1, 900, 308 + 2 * 124 + 40, 0, 0));
   check(v.page() == 2 && v.inContent(), "touch nav -> settings page, content focus");
   System.out.println("launcher checks ok");
  }
@@ -85,13 +86,5 @@ public final class RenderLauncher {
   Bitmap cs = Bitmap.createBitmap(1240, 1080, Bitmap.Config.ARGB_8888); Canvas cc = new Canvas(cs);
   for (int i = 0; i < 3; i++) { clock = 40000; SystemClock.testNow = clock; CompanionView v = companion(0, false); frames(v, 3, cc); v.showTab(i); frames(v, 70, cc); shot(v, out + "/bottom-" + ctabs[i] + ".png", 1240, 1080); }
   { clock = 40000; SystemClock.testNow = clock; CompanionView v = companion(0, true); frames(v, 80, cc); shot(v, out + "/bottom-paused.png", 1240, 1080); }
-  Bitmap scratch = Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888); Canvas sc = new Canvas(scratch);
-  String[] names = { "play", "import", "settings", "about" };
-  for (int p = 0; p < 4; p++) {
-   clock = 40000; SystemClock.testNow = clock;
-   LauncherView v = make(0); v.setLayout(0); frames(v, 5, sc);
-   v.showPage(p); frames(v, 70, sc);
-   shot(v, out + "/launcher-" + names[p] + ".png", 1920, 1080);
-  }
  }
 }
