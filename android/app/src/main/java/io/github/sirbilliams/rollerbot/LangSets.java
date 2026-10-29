@@ -44,6 +44,26 @@ final class LangSets {
         return after ? sb.toString() : p;
     }
 
+    /**
+     * The language of a set from its FILES, never from folder names or settings: the retail sets differ in their loading
+     * screens (english load1.pcx..load6.pcx, french load1f.pcx.., german ..g, spanish ..s, italian ..i). Null when no
+     * loading screen is found. Names are matched case-insensitively, any folder prefix is ignored.
+     */
+    static String detect(Iterable<String> fileNames) {
+        boolean plain = false;
+        String found = null;
+        for (String raw : fileNames) {
+            String n = raw.replace('\\', '/');
+            n = n.substring(n.lastIndexOf('/') + 1).toLowerCase(Locale.ROOT);
+            if (n.matches("load[1-9]\\.pcx")) plain = true;
+            else if (n.matches("load[1-9][fgsi]\\.pcx") && found == null) {
+                char c = n.charAt(5);
+                found = c == 'f' ? "french" : c == 'g' ? "german" : c == 's' ? "spanish" : "italian";
+            }
+        }
+        return found != null ? found : plain ? "english" : null;
+    }
+
     /** Index into DIRS, or -1. */
     static int index(String lang) { for (int i = 0; i < DIRS.length; i++) if (DIRS[i].equals(lang)) return i; return -1; }
 
