@@ -1,4 +1,5 @@
 #include "platform/Platform.h"
+#include "platform/Bridge.h"
 
 #include <SDL.h>
 #include <SDL_opengles2.h>
@@ -36,10 +37,12 @@ struct Platform::Impl {
   SDL_Window* win = nullptr;
   SDL_GLContext gl = nullptr;
   SDL_GameController* pad = nullptr;
+  SDL_Joystick* joy = nullptr;   // fallback for pads SDL has no controller mapping for
   Input input;
   Viewport vp;
   Game* game = nullptr;
-  bool quit = false, paused = false;
+  bool quit = false, paused = false;        // paused = what the game was told (suspend or user)
+  bool suspended = false, userPaused = false;
   uint32_t keyMask = 0, padMask = 0;
   long maxFrames = -1;
   std::string shotPath;
@@ -53,20 +56,49 @@ struct Platform::Impl {
   }
   static uint32_t bit(Action a) { return 1u << unsigned(a); }
 
-  void setPausedState(bool p) {
+  void refreshPaused() {
+    bool p = suspended || userPaused;
     if (p == paused || !game) return;
     paused = p;
     if (p) game->pause(); else game->resume();
   }
+  void setSuspended(bool s) { suspended = s; refreshPaused(); }
 
   void openPad() {
     if (pad) return;
     for (int i = 0; i < SDL_NumJoysticks(); i++)
-      if (SDL_IsGameController(i) && (pad = SDL_GameControllerOpen(i))) break;
+      if (SDL_IsGameController(i) && (pad = SDL_GameControllerOpen(i))) return;
+    if (!joy && SDL_NumJoysticks() > 0) joy = SDL_JoystickOpen(0);
+  }
+
+  // Unmapped joystick (some handheld pads): the common Android order is A B X Y L R Back Start.
+  uint32_t joyMask() {
+    uint32_t m = 0;
+    if (!joy) return m;
+    static const Action btn[] = {Action::Accept, Action::Back, Action::Jump, Action::Action2, Action::Count,
+                                 Action::Count, Action::Menu, Action::Pause};
+    int n = SDL_JoystickNumButtons(joy);
+    for (int i = 0; i < n && i < 8; i++)
+      if (btn[i] != Action::Count && SDL_JoystickGetButton(joy, i)) m |= bit(btn[i]);
+    if (SDL_JoystickNumAxes(joy) >= 2) {
+      int ax = SDL_JoystickGetAxis(joy, 0), ay = SDL_JoystickGetAxis(joy, 1);
+      if (ax < -12000) m |= bit(Action::Left);
+      if (ax > 12000) m |= bit(Action::Right);
+      if (ay < -12000) m |= bit(Action::Up);
+      if (ay > 12000) m |= bit(Action::Down);
+    }
+    if (SDL_JoystickNumHats(joy) > 0) {
+      uint8_t h = SDL_JoystickGetHat(joy, 0);
+      if (h & SDL_HAT_UP) m |= bit(Action::Up);
+      if (h & SDL_HAT_DOWN) m |= bit(Action::Down);
+      if (h & SDL_HAT_LEFT) m |= bit(Action::Left);
+      if (h & SDL_HAT_RIGHT) m |= bit(Action::Right);
+    }
+    return m;
   }
 
   void recomputePad() {
-    uint32_t m = 0;
+    uint32_t m = joyMask();
     if (pad) {
       auto b = [&](SDL_GameControllerButton x) { return SDL_GameControllerGetButton(pad, x) != 0; };
       if (b(SDL_CONTROLLER_BUTTON_DPAD_UP)) m |= bit(Action::Up);
@@ -126,7 +158,11 @@ struct Platform::Impl {
         input.setSource(0, keyMask);
         break;
       }
-      case SDL_CONTROLLERDEVICEADDED: openPad(); break;
+      case SDL_CONTROLLERDEVICEADDED: case SDL_JOYDEVICEADDED: openPad(); break;
+      case SDL_JOYDEVICEREMOVED:
+        if (joy && e.jdevice.which == SDL_JoystickInstanceID(joy)) { SDL_JoystickClose(joy); joy = nullptr; }
+        recomputePad(); openPad(); break;
+      case SDL_JOYBUTTONDOWN: case SDL_JOYBUTTONUP: case SDL_JOYAXISMOTION: case SDL_JOYHATMOTION: recomputePad(); break;
       case SDL_CONTROLLERDEVICEREMOVED:
         if (pad && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) {
           SDL_GameControllerClose(pad); pad = nullptr;
@@ -158,8 +194,8 @@ namespace {
 int lifecycleWatch(void* ud, SDL_Event* e) {
   auto* d = static_cast<Platform::Impl*>(ud);
   switch (e->type) {
-    case SDL_APP_WILLENTERBACKGROUND: d->setPausedState(true); break;   // incl. lid close / screen off
-    case SDL_APP_DIDENTERFOREGROUND: d->setPausedState(false); break;
+    case SDL_APP_WILLENTERBACKGROUND: d->setSuspended(true); break;   // incl. lid close / screen off
+    case SDL_APP_DIDENTERFOREGROUND: d->setSuspended(false); break;
     case SDL_APP_TERMINATING: d->quit = true; break;
     default: break;
   }
@@ -170,6 +206,7 @@ int lifecycleWatch(void* ud, SDL_Event* e) {
 Platform::Platform() : d_(new Impl) {}
 Platform::~Platform() {
   if (d_->pad) SDL_GameControllerClose(d_->pad);
+  if (d_->joy) SDL_JoystickClose(d_->joy);
   if (d_->gl) SDL_GL_DeleteContext(d_->gl);
   if (d_->win) SDL_DestroyWindow(d_->win);
   SDL_Quit();
@@ -180,7 +217,7 @@ bool Platform::create(const Config& cfg) {
   SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
   SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
   SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
-  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK | SDL_INIT_EVENTS) != 0) {
     SDL_Log("SDL_Init: %s", SDL_GetError());
     return false;
   }
@@ -227,9 +264,15 @@ int Platform::run(Game& game) {
     uint64_t now = SDL_GetPerformanceCounter();
     acc += double(now - last) / double(freq);
     last = now;
-    if (d.paused) { acc = 0; SDL_Delay(50); continue; }   // suspended: no updates, no rendering
+    // companion/UI requests
+    int ws = Bridge::takeWidescreen();
+    if (ws >= 0 && ws <= 3) d.cfg.widescreen = Widescreen(ws);
+    d.userPaused = Bridge::pauseRequested();
+    d.refreshPaused();
+    if (d.suspended) { acc = 0; SDL_Delay(50); continue; }   // app/lid suspend: no updates, no rendering
     int steps = 0;
-    if (deterministic) { steps = 1; acc = 0; }
+    if (d.userPaused) { steps = 0; acc = 0; SDL_Delay(8); }
+    else if (deterministic) { steps = 1; acc = 0; }
     else {
       acc = std::min(acc, d.cfg.step * 5);
       while (acc >= d.cfg.step && steps < 5) { acc -= d.cfg.step; steps++; }

@@ -2,6 +2,7 @@
 #include "assets/Assets.h"
 #include "audio/Audio.h"
 #include "game/BrainHost.h"
+#include "platform/Bridge.h"
 #include "scene/Scene.h"
 #include <SDL.h>
 #include <algorithm>
@@ -59,6 +60,11 @@ class RollerGame : public Game, public HostSink, public HostInput {
 
   void update(double dt) override {
     ++frame_;
+    if (int n = Bridge::takeLevelRequest()) {   // companion level select
+      char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", n);
+      if (store_.find(std::string(nm) + ".prj")) loadLevel(nm);
+    }
+    publishStatus();
     if (!host_) return;
     const Input& in = plat_->input();
     if (in.pressed(Action::Back) && !envs("RB_NOQUIT")) plat_->requestQuit();
@@ -86,7 +92,10 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (it != shots_.end()) plat_->screenshot(it->second);
   }
 
-  void shutdown() override { audio_.shutdown(); }
+  void shutdown() override { Bridge::publish(Status{}); audio_.shutdown(); }
+  // App/lid suspend or user pause (platform calls these): silence and freeze audio too.
+  void pause() override { paused_ = true; if (audioOk_) audio_.pauseAll(); }
+  void resume() override { paused_ = false; if (audioOk_) audio_.resumeAll(); }
 
   // ---- HostSink
   void lightColor(int el, int r, int g, int b) override { (void)el; (void)r; (void)g; (void)b; }
@@ -122,6 +131,22 @@ class RollerGame : public Game, public HostSink, public HostInput {
   bool any() override { const Input& in = plat_->input(); return in.held(Action::Accept) || in.held(Action::Jump); }
 
  private:
+  // Read-only status for the second-screen companion (rb::Bridge). Globals: 220 lives, 201 fruit, 203 points.
+  void publishStatus() {
+    Status st;
+    st.running = host_ != nullptr;
+    st.level = level_.size() > 5 ? std::atoi(level_.c_str() + 5) : 0;
+    if (levels_.empty())
+      for (int n = 1; n < 100; ++n) {
+        char nm[32]; std::snprintf(nm, sizeof nm, "level%03d.prj", n);
+        if (store_.find(nm)) levels_.push_back(n);
+      }
+    st.levels = levels_;
+    if (host_) { st.lives = host_->globalValue(220); st.fruit = host_->globalValue(201); st.points = host_->globalValue(203); }
+    st.paused = paused_;
+    st.widescreen = int(plat_->config().widescreen);
+    Bridge::publish(st);
+  }
   struct Slot { FrameId frame = 0; Model* model = nullptr; bool tried = false; bool shown = false; };
 
   bool loadLevel(const std::string& level, bool carryGlobals = false) {
@@ -306,7 +331,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
   float field_ = 0.9375f, fogStart_ = 150.f, fogEnd_ = 900.f, tile_ = 40.f;
   bool flip_ = !envs("RB_NOFLIP");
   long frame_ = 0;
-  bool pendingExit_ = false;
+  bool pendingExit_ = false, paused_ = false;
+  std::vector<int> levels_;
 };
 
 }  // namespace

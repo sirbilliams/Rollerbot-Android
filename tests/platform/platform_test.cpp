@@ -1,5 +1,6 @@
 // Headless checks: layout math, input edges, PNG writer. No window needed.
 #include "platform/Platform.h"
+#include "platform/Bridge.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -36,6 +37,13 @@ int main() {
   CHECK(in.held(Action::Accept) && !in.pressed(Action::Accept));
   in.beginFrame(); in.setSource(0, 0); in.endFrame();
   CHECK(!in.held(Action::Accept) && in.released(Action::Accept));
+
+  Status st; st.level = 3; st.lives = 5; st.fruit = 7; st.points = 9; st.paused = true; st.widescreen = 2; st.levels = {1, 3, 4};
+  Bridge::publish(st);
+  CHECK(Bridge::statusLine() == "3|5|7|9|1|2|1,3,4");
+  Bridge::requestLevel(4); CHECK(Bridge::takeLevelRequest() == 4 && Bridge::takeLevelRequest() == 0);
+  Bridge::requestWidescreen(1); CHECK(Bridge::takeWidescreen() == 1 && Bridge::takeWidescreen() == -1);
+  Bridge::requestPause(true); CHECK(Bridge::pauseRequested()); Bridge::requestPause(false);
 
   std::vector<uint8_t> px(4 * 3 * 4, 200);
   const char* tmp = std::getenv("TMPDIR");

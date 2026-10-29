@@ -12,3 +12,4 @@ android/app/src/main/java/org/libsdl/
 android/.gradle/
 android/local.properties
 .cxx/
+android/app/jni/unshield/

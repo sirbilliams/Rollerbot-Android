@@ -2,3 +2,6 @@
 SDL_REPO=https://github.com/libsdl-org/SDL
 SDL_REF=release-2.32.10
 SDL_COMMIT=5d249570393f7a37e037abf22cd6012a4cc56a71
+UNSHIELD_REPO=https://github.com/twogood/unshield
+UNSHIELD_REF=1.5.1
+UNSHIELD_COMMIT=871c2bf9a5694e694abeeeceb034a687fd29b243

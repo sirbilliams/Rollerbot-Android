@@ -24,7 +24,7 @@ public class RollerActivity extends SDLActivity {
 
     @Override
     protected String[] getLibraries() {
-        return new String[] { "SDL2", "rollerbot" };
+        return new String[] { "SDL2", "rollerbot" };   // librollerbot also holds the JNI bridge for Native
     }
 
     @Override
