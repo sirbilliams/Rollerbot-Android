@@ -34,6 +34,17 @@ Needs JDK 17, Android SDK 34, NDK 26.3 and CMake 3.22. App id `io.github.sirbill
 `main` builds the APK and publishes it as the `latest` release (`.github/workflows/build.yml`, which also builds
 and tests the desktop version).
 
+## Getting the game in (bring your own disc)
+
+The Android launcher imports straight from your disc: pick the CD folder (or its Setup files), a CD image
+(`roller.iso`, or the raw `roller.bin`), or a `.zip` / folder of an already-installed game. The disc's InstallShield
+cabinet is read with unshield (MIT) and the `CodeAndData(<language>)` set you choose (EN/FR/DE/ES/IT) is
+extracted into app storage. On desktop, `build/src/platform/rb_import <disc folder|image> <dest> [language]` does
+the same (needs `bash fetch-deps.sh` first).
+
+On the AYN Thor the bottom screen shows a companion panel: status (level, lives, fruit, points, pause/resume), a
+level select and settings (widescreen, controls).
+
 ## Flatpak
 
 `packaging/flatpak/io.github.sirbilliams.Rollerbot.yml`: see the comment at the top. On first run the launcher asks
