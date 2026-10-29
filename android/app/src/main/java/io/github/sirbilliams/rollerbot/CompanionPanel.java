@@ -99,6 +99,14 @@ final class CompanionPanel {
                     PortPrefs.setWidescreen(c, m);
                     try { Native.requestWidescreen(m); } catch (UnsatisfiedLinkError e) { /* ditto */ }
                 }
+                @Override public void volume(int pct) {
+                    PortPrefs.setVolume(c, pct);
+                    try { Native.requestVolume(pct); } catch (UnsatisfiedLinkError e) { /* ditto */ }
+                }
+                @Override public void language(int idx) {
+                    PortPrefs.setLang(c, idx);
+                    try { Native.requestLang(idx); } catch (UnsatisfiedLinkError e) { /* ditto */ }
+                }
                 @Override public int reached() { return PortPrefs.reached(c); }
             });
             addView(cv, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));

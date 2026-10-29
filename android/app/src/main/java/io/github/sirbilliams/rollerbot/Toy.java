@@ -23,6 +23,7 @@ final class Toy {
     static final int[] GROUND = { 0xffe8b25a, 0xff63c85a, 0xff3a4466, 0xff7e72c8 };
     static final int[] GROUND_DARK = { 0xffc98c38, 0xff3e9e3c, 0xff262e4a, 0xff5a4fa0 };
     /** Toy palette: red, orange, yellow, green, teal, blue, violet, pink. */
+    static final String[] LANG_LABELS = { "EN", "FR", "DE", "ES", "IT" };
     static final int[] TOYS = { 0xffff4b3e, 0xffff9a1f, 0xffffd81f, 0xff3cc84a, 0xff1fc4b4, 0xff2f8df0, 0xff8b5cf0, 0xfff05cae };
 
     final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);

@@ -24,6 +24,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
 
     private LauncherView view;
     private boolean importing, confirmRemove;
+    private LauncherPanel panel;
     private int pick = -1;   // index into playable() chosen with Left / Right on the Play page
 
     @Override
@@ -42,7 +43,17 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
     @Override
     protected void onResume() {
         super.onResume();
+        int gl = LangSets.index(SaveInfo.read(SaveInfo.dir(this)).lang);   // a language chosen in the game's menu carries over
+        if (gl >= 0 && GameImporter.installed(this)[gl]) PortPrefs.setLang(this, gl);
+        if (panel == null) panel = new LauncherPanel(this, view, this);
+        if (PortPrefs.companion(this)) panel.resume(); else panel.pause();
         refresh();
+    }
+
+    @Override
+    protected void onPause() {
+        if (panel != null) panel.pause();
+        super.onPause();
     }
 
     // The view takes keys and sticks itself; these make sure they reach it even when focus drifts.
@@ -94,51 +105,70 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         for (int n : all) if (n > 1) total++;
         view.setPlay(have, s.lastLevel > 1 ? s.lastLevel : 0, s.highScore, s.lastScore, Math.max(unlocked, have ? 1 : 0), total, shown > 1 ? indexOf(all, shown) : 0);
 
+        // ---- Play: status tiles are drawn by the view; rows are the three ways to start, plus one notice when the chosen language is missing
         List<LauncherView.Row> pr = new ArrayList<>();
+        int want = PortPrefs.lang(this);
         if (have) {
             pr.add(new LauncherView.Row(s.lastLevel > 1 ? "Continue" : "Start game", s.lastLevel > 1 ? "Level " + s.lastLevel : "from the title", true, false));
             pr.add(new LauncherView.Row("New game", "from the title", true, false));
             pr.add(new LauncherView.Row("Play level", String.valueOf(shown), play.length > 0, true));
-            if (!inst[PortPrefs.lang(this)]) pr.add(new LauncherView.Row("Import " + PortPrefs.LANG_LABELS[PortPrefs.lang(this)] + " from your disc", "", true, false));
+            if (!inst[want]) pr.add(new LauncherView.Row(PortPrefs.LANG_LABELS[want] + " isn't installed", "Game files", true, false));
         } else {
-            pr.add(new LauncherView.Row("Import your game first", "", false, false));
+            pr.add(new LauncherView.Row("No game files yet", "Game files", true, false));
         }
         view.setRows(0, pr.toArray(new LauncherView.Row[0]));
-        view.setLines(0, have ? "Play" : "Welcome", have ? playLines(inst, active) : new String[] { "No game imported yet. Choose Import and bring your own disc." });
+        view.setLines(0, "Play");
+        { List<Integer> l = new ArrayList<>(); for (int n : all) if (n > 1) l.add(n); int[] nums = new int[l.size()]; for (int k = 0; k < nums.length; k++) nums[k] = l.get(k); view.setLevels(nums, s.reached); }
 
-        view.setLines(1, "Import your game",
-                have ? "Game found. Importing again replaces it." : "Pick the folder of your disc, or an image (.iso, .bin) or a .zip.",
-                "Every language on the disc is installed; the one chosen below opens first.");
+        // ---- Game files: a status block (drawn by the view), then the actions
+        view.setLines(1, "Game files");
+        view.setFiles(inst, have ? sizeText() : "");
         view.setRows(1, new LauncherView.Row[] {
             new LauncherView.Row("Import from disc folder", "", !importing, false),
             new LauncherView.Row("Import from image or .zip", "", !importing, false),
-            new LauncherView.Row("Preferred language", PortPrefs.LANG_LABELS[PortPrefs.lang(this)], !importing, true),
-            new LauncherView.Row(confirmRemove ? "Press again to remove" : "Remove imported game", "", have && !importing, false) });
+            new LauncherView.Row(confirmRemove ? "Press again to remove" : "Remove game files", "", have && !importing, false) });
 
-        view.setLines(2, "Settings", "Move: D-pad or left stick     Jump: " + PortPrefs.CONTROLS[PortPrefs.controls(this)],
-                "Start opens the game menu: resume, restart, level, screen.", "Changes apply the next time the game starts.");
+        // ---- Settings, grouped
+        view.setLines(2, "Settings");
         view.setRows(2, new LauncherView.Row[] {
+            LauncherView.Row.header("Display"),
             new LauncherView.Row("Widescreen", WS_NAMES[PortPrefs.widescreen(this)], true, true),
-            new LauncherView.Row("Controls", PortPrefs.CONTROLS[PortPrefs.controls(this)], true, true),
             new LauncherView.Row("Bottom screen", PortPrefs.companion(this) ? "On" : "Off", true, true),
+            new LauncherView.Row("Menu layout", PortPrefs.LAYOUTS[PortPrefs.layout(this)], true, true),
+            LauncherView.Row.header("Controls"),
+            new LauncherView.Row("Jump button", JUMP[PortPrefs.controls(this)], true, true),
+            new LauncherView.Row("Controls reference", "", true, false),
+            LauncherView.Row.header("Sound"),
             new LauncherView.Row("Volume", PortPrefs.volume(this) + "%", true, true),
-            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[active], have && countOf(inst) > 1, true),
-            new LauncherView.Row("Menu layout", PortPrefs.LAYOUTS[PortPrefs.layout(this)], true, true) });
+            LauncherView.Row.header("Language"),
+            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[active], have && countOf(inst) > 1, true) });
 
         view.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handhelds and desktop.",
-                "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version " + version());
+                "The game belongs to its original makers; this port is an independent fan project with original code.",
+                "Bring your own disc: no game files are included. Not affiliated with or endorsed by the rights holders.", "Version " + version());
         view.setRows(3, new LauncherView.Row[0]);
+        if (panel != null) panel.refresh();
     }
 
-    /** What the Play page says about the language: the set that will run (detected from its files), and a note when the chosen one is missing. */
-    private String[] playLines(boolean[] inst, int active) {
-        File root = GameImporter.findGameRoot(this);
-        String det = root != null ? GameImporter.detectLang(root) : null;
-        String shown = det != null ? PortPrefs.LANG_LABELS[LangSets.index(det)] + " (detected)" : PortPrefs.LANG_LABELS[active] + " (unverified)";
-        int want = PortPrefs.lang(this);
-        if (!inst[want]) return new String[] { "Language: " + shown, PortPrefs.LANG_LABELS[want] + " isn't installed: import your disc again to get it." };
-        return new String[] { "Language: " + shown + "  (change in Settings)" };
+    static final String[] JUMP = { "A and X", "A only", "X only" };
+    private String sizeCache;
+    /** Size of the installed game files, e.g. "3 sets, 1.2 GB". */
+    private String sizeText() {
+        if (sizeCache == null) {
+            long total = 0; int sets = 0;
+            boolean[] inst = GameImporter.installed(this);
+            for (int i = 0; i < inst.length; i++) if (inst[i]) { sets++; total += dirSize(GameImporter.langDir(this, i), 0); }
+            sizeCache = sets + (sets == 1 ? " set, " : " sets, ") + (total >= (1L << 30) ? String.format(java.util.Locale.US, "%.1f GB", total / 1073741824.0) : (total >> 20) + " MB");
+        }
+        return sizeCache;
     }
+    private static long dirSize(File d, int depth) {
+        long n = 0; File[] ks = d.listFiles();
+        if (ks == null || depth > 6) return 0;
+        for (File k : ks) n += k.isDirectory() ? dirSize(k, depth + 1) : k.length();
+        return n;
+    }
+
     private static int countOf(boolean[] b) { int n = 0; for (boolean x : b) if (x) n++; return n; }
     private static int indexOf(int[] a, int v) { for (int i = 0; i < a.length; i++) if (a[i] == v) return i; return 0; }
     private String version() {
@@ -147,39 +177,48 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
 
     // ---- LauncherView.Actions -------------------------------------------------------------------------------
     @Override public void select(int page, int row) {
-        confirmRemove = confirmRemove && page == 1 && row == 3;
+        confirmRemove = confirmRemove && page == 1 && row == 2;
         if (page == 0) {
             SaveInfo s = SaveInfo.read(SaveInfo.dir(this));
             int[] play = playable(levels(), s);
+            boolean have = GameImporter.findGameRoot(this) != null;
+            if (!have || row == 3) { view.selectPage(1); return; }     // the notice rows lead to Game files
             if (row == 0) play(s.lastLevel > 1 ? s.lastLevel : 0);
             else if (row == 1) play(0);
             else if (row == 2 && play.length > 0) play(play[Math.min(pick, play.length - 1)]);
-            else if (row == 3) pickSource(REQ_TREE);       // the chosen language isn't installed: import the disc again
         } else if (page == 1) {
             if (row == 0) pickSource(REQ_TREE);
             else if (row == 1) pickSource(REQ_FILE);
-            else if (row == 3) {
-                if (confirmRemove) { GameImporter.deleteGame(this); confirmRemove = false; } else confirmRemove = true;
+            else if (row == 2) {
+                if (confirmRemove) { GameImporter.deleteGame(this); confirmRemove = false; sizeCache = null; } else confirmRemove = true;
                 refresh();
             }
+        } else if (page == 2 && row == 6) {
+            view.showInfo("Controls reference", "Move: D-pad or left stick", "Jump: " + JUMP[PortPrefs.controls(this)] + " (see Jump button)", "Menu: Start (resume, restart, level, settings)",
+                    "Back: B", "Keyboard: arrows, Enter or Space, Esc");
         }
     }
 
+    @Override public void playLevel(int n) {
+        SaveInfo s = SaveInfo.read(SaveInfo.dir(this));
+        if (GameImporter.findGameRoot(this) != null && n > 0 && n <= Math.max(s.reached, 3)) play(n);
+    }
+
     @Override public void adjust(int page, int row, int dir) {
+        int step = dir == 2 ? 1 : dir;
         if (page == 0 && row == 2) {
             int[] play = playable(levels(), SaveInfo.read(SaveInfo.dir(this)));
-            if (play.length > 0) pick = Math.floorMod(pick + dir, play.length);
-        } else if (page == 1 && row == 2) PortPrefs.setLang(this, PortPrefs.lang(this) + dir);
-        else if (page == 2 && row == 0) PortPrefs.setWidescreen(this, PortPrefs.widescreen(this) + dir);
-        else if (page == 2 && row == 1) PortPrefs.setControls(this, PortPrefs.controls(this) + dir);
+            if (play.length > 0) pick = Math.floorMod(pick + step, play.length);
+        } else if (page == 2 && row == 1) PortPrefs.setWidescreen(this, PortPrefs.widescreen(this) + step);
         else if (page == 2 && row == 2) PortPrefs.setCompanion(this, !PortPrefs.companion(this));
-        else if (page == 2 && row == 3) PortPrefs.setVolume(this, PortPrefs.volume(this) + 10 * dir);
-        else if (page == 2 && row == 5) { PortPrefs.setLayout(this, PortPrefs.layout(this) + dir); view.setLayout(PortPrefs.layout(this) + 1); }
-        else if (page == 2 && row == 4) {      // Game language: only the installed sets, no re-import
+        else if (page == 2 && row == 3) { PortPrefs.setLayout(this, PortPrefs.layout(this) + step); view.setLayout(PortPrefs.layout(this) + 1); }
+        else if (page == 2 && row == 5) PortPrefs.setControls(this, PortPrefs.controls(this) + step);
+        else if (page == 2 && row == 8) PortPrefs.setVolume(this, dir == 2 && PortPrefs.volume(this) >= 100 ? 0 : PortPrefs.volume(this) + 10 * step);
+        else if (page == 2 && row == 10) {      // Game language: only the installed sets, no re-import; also the language the next import opens first
             boolean[] inst = GameImporter.installed(this);
             int n = PortPrefs.LANG_DIRS.length, cur = GameImporter.activeLang(this);
             for (int k = 1; k <= n; k++) {
-                int i = Math.floorMod(cur + dir * k, n);
+                int i = Math.floorMod(cur + step * k, n);
                 if (inst[i]) { PortPrefs.setLang(this, i); break; }
             }
         }
@@ -224,6 +263,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
                 final String err = req == REQ_FILE ? GameImporter.importFile(SetupActivity.this, uri, lg, prog) : GameImporter.importTree(SetupActivity.this, uri, lg, prog);
                 runOnUiThread(new Runnable() { @Override public void run() {
                     importing = false;
+                    sizeCache = null;
                     refresh();
                     view.setProgress(err == null ? -1 : 0, err == null ? "" : err);
                 } });

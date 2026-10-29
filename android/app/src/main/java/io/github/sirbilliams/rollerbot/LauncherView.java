@@ -18,21 +18,27 @@ import android.view.View;
  * See docs/launcher.md. SetupActivity owns the logic and feeds pages through setRows / setLines / setPlay / setProgress.
  */
 final class LauncherView extends View {
-    static final String[] PAGES = { "Play", "Import", "Settings", "About" };
-    private static final String[] SUB = { "Roll on", "Bring your disc", "Make it yours", "Who made this" };
+    static final String[] PAGES = { "Play", "Game files", "Settings", "About" };
+    private static final String[] SUB = { "Roll on", "Your own disc", "Make it yours", "Who made this" };
     private static final int[] PAGE_COL = { 0xff3cc84a, 0xffff9a1f, 0xff2f8df0, 0xff8b5cf0 };
 
     interface Actions {
         void select(int page, int row);
+        /** dir +1 / -1 from the pad or a tap on an arrow; 2 = a plain tap on a toggle (step on, wrapping round). */
         void adjust(int page, int row, int dir);
+        /** A level tile on the bottom screen. */
+        void playLevel(int n);
         /** B / Back at the top level: leave the launcher. */
         void quit();
     }
 
     static final class Row {
         final String label, value;
-        final boolean enabled, adjustable;
-        Row(String label, String value, boolean enabled, boolean adjustable) { this.label = label; this.value = value; this.enabled = enabled; this.adjustable = adjustable; }
+        final boolean enabled, adjustable, header;
+        Row(String label, String value, boolean enabled, boolean adjustable) { this(label, value, enabled, adjustable, false); }
+        private Row(String label, String value, boolean enabled, boolean adjustable, boolean header) { this.label = label; this.value = value; this.enabled = enabled; this.adjustable = adjustable; this.header = header; }
+        /** A section header inside a card: small caps, never selectable (the pad skips it). */
+        static Row header(String title) { return new Row(title, "", false, false, true); }
     }
 
     // stage geometry (1920 x 1080)
@@ -51,11 +57,18 @@ final class LauncherView extends View {
     private final Actions actions;
     private final Row[][] rows = { {}, {}, {}, {} };
     private final String[][] lines = { {}, {}, {}, {} };
-    private final String[] heading = { "Play", "Import your game", "Settings", "About" };
+    private final String[] heading = { "Play", "Game files", "Settings", "About" };
 
     // play card data
     private boolean hasGame;
     private int level, hi, last, unlocked, total, pickLevel;
+    // read by the bottom-screen launcher (LauncherBottomView)
+    int[] levelNums = new int[0];
+    int reached = 1;
+    boolean[] installed = new boolean[5];
+    String sizeText = "";
+    private String[] infoText;      // a reference text shown instead of the rows (Controls reference)
+    private String infoTitle = "";
     private float progress = -1;
     private String progressLabel = "";
 
@@ -116,6 +129,24 @@ final class LauncherView extends View {
     }
     void setProgress(float f, String label) { progress = f; progressLabel = label; invalidate(); }
     int page() { return page; }
+    int era() { return era; }
+    int level() { return level; }
+    int highScore() { return hi; }
+    int lastScore() { return last; }
+    boolean hasGame() { return hasGame; }
+    int pickLevel() { return pickLevel; }
+    Row[] rowsOf(int p) { return rows[p]; }
+    String[] linesOf(int p) { return lines[p]; }
+    String headingOf(int p) { return heading[p]; }
+    float progress() { return progress; }
+    String progressLabel() { return progressLabel; }
+    boolean infoShowing() { return infoText != null; }
+    void setLevels(int[] nums, int reachedLevel) { levelNums = nums; reached = reachedLevel; invalidate(); }
+    void setFiles(boolean[] inst, String size) { installed = inst; sizeText = size; invalidate(); }
+    /** Shows a reference text in the card in place of the rows; any key, B or a tap closes it. */
+    void showInfo(String title, String... ls) { infoTitle = title; infoText = ls; invalidate(); }
+    /** The bottom screen picks a section: the top screen follows, focus on the section buttons. */
+    void selectPage(int p) { col = 0; infoText = null; if (p != page) switchPage(p); invalidate(); }
     boolean inContent() { return col == 1; }
     void showPage(int p) { if (p != page) { switchPage(p); } }
     int row() { return row; }
@@ -123,7 +154,7 @@ final class LauncherView extends View {
     private void switchPage(int p) {
         android.util.Log.i("Rollerbot", "launcher page " + p);   // the CI smoke test checks the pad moved the pages
         prevEra = era; page = p; era = p; wipe = 0; panelIn = 0; bounceT = 0;
-        row = firstEnabled(p); scroll = 0;
+        row = firstEnabled(p); scroll = 0; infoText = null;
     }
     private int firstEnabled(int p) { for (int i = 0; i < rows[p].length; i++) if (rows[p][i].enabled) return i; return 0; }
 
@@ -149,9 +180,10 @@ final class LauncherView extends View {
         if (row < rs.length && rs[row].enabled) { actions.select(page, row); bounceT = 0; }
     }
     /** Returns true when B stepped back inside the launcher; false at the top level (the Activity leaves). */
-    boolean back() { if (col == 1) { col = 0; return true; } return false; }
+    boolean back() { if (infoText != null) { infoText = null; return true; } if (col == 1) { col = 0; return true; } return false; }
 
     @Override public boolean onKeyDown(int k, KeyEvent e) {
+        if (infoText != null && (k == KeyEvent.KEYCODE_BUTTON_A || k == KeyEvent.KEYCODE_BUTTON_B || k == KeyEvent.KEYCODE_BACK || k == KeyEvent.KEYCODE_ENTER || k == KeyEvent.KEYCODE_DPAD_CENTER)) { infoText = null; invalidate(); return true; }
         switch (k) {
             case KeyEvent.KEYCODE_DPAD_UP: move(-1); break;
             case KeyEvent.KEYCODE_DPAD_DOWN: move(1); break;
@@ -184,7 +216,7 @@ final class LauncherView extends View {
     private float sy(float py) { return py / scale - oy; }
     /** The page button i: left column (classic), tab row (A) or centred stack (B). */
     private void navRect(int i, RectF o) {
-        if (layout == 1) { float w = 330, g = 24, x0 = 960 - (4 * w + 3 * g) / 2; o.set(x0 + i * (w + g), 250, x0 + i * (w + g) + w, 330); }
+        if (layout == 1) { float w = 366, g = 20, x0 = 960 - (4 * w + 3 * g) / 2; o.set(x0 + i * (w + g), 250, x0 + i * (w + g) + w, 330); }
         else { float h = 100, g = 24; o.set(660, 308 + i * (h + g), 1260, 308 + i * (h + g) + h); }
     }
     private boolean cardHidden() { return layout == 2 && open < 0.5f; }
@@ -197,15 +229,16 @@ final class LauncherView extends View {
     private int hitRow(float x, float y) {
         if (cardHidden()) return -1;
         float top = rowsTop(page);
-        for (int i = scroll; i < Math.min(rows[page].length, scroll + vis()); i++) {
-            float ry = top + (i - scroll) * (rowH + rowGap);
-            if (x >= panX + 40 && x <= panX + panW - 40 && y >= ry && y <= ry + rowH) return i;
+        for (int i = scroll; i < visEnd(); i++) {
+            float ry = top + span(scroll, i);
+            if (!rows[page][i].header && x >= panX + 40 && x <= panX + panW - 40 && y >= ry && y <= ry + rowH) return i;
         }
         return -1;
     }
 
     @Override public boolean onTouchEvent(MotionEvent e) {
         float x = sx(e.getX()), y = sy(e.getY());
+        if (infoText != null) { if (e.getActionMasked() == MotionEvent.ACTION_UP) { infoText = null; invalidate(); } return true; }
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downNav = hitNav(x, y); downRow = hitRow(x, y);
@@ -234,19 +267,36 @@ final class LauncherView extends View {
     }
 
     // ---- drawing --------------------------------------------------------------------------------------------
-    /** Rows that fit between the card's text and the ground line (the list scrolls when there are more). */
-    private int vis() {
+    private static final float HDR_H = 40;
+    private float rh(int i) { return rows[page][i].header ? HDR_H : rowH; }
+    /** Height from the top of row `from` to the bottom edge of row `to - 1` (rows plus gaps). */
+    private float span(int from, int to) { float h = 0; for (int k = from; k < to; k++) h += rh(k) + rowGap; return h; }
+    /** One past the last row that fits below the card text above the ground line, starting at `scroll`. */
+    private int visEnd() {
         int n = rows[page].length;
-        int fit = (int) ((GROUND - 8 - rowsTop(page) - 24) / (rowH + rowGap));
-        return Math.max(1, Math.min(n, fit));
+        float avail = GROUND - 8 - rowsTop(page) - 24;
+        int e = scroll;
+        while (e < n && span(scroll, e + 1) <= avail + rowGap) e++;
+        return Math.max(Math.min(n, scroll + 1), e);
     }
-    private void keepVisible() { int vs = vis(); if (row < scroll) scroll = row; if (row >= scroll + vs) scroll = row - vs + 1; scroll = Math.max(0, Math.min(scroll, Math.max(0, rows[page].length - vs))); }
+    /** Keep the focused row visible, and its section header with it. */
+    private void keepVisible() {
+        int n = rows[page].length;
+        int top = row;
+        while (top > 0 && rows[page][top - 1].header) top--;
+        if (top < scroll) scroll = top;
+        while (visEnd() <= row && scroll < row) scroll++;
+        if (n == 0) scroll = 0;
+        // when the section header is the first thing above, make sure scrolling did not push it out
+        if (top < scroll) scroll = top;
+    }
 
-    private float panH() { return Math.max(minH, rowsTop(page) - panY + vis() * (rowH + rowGap) + 26); }
+    private float panH() { return Math.max(minH, rowsTop(page) - panY + span(scroll, visEnd()) + 26); }
 
     private float rowsTop(int p) {
-        if (p == 0) return panY + playRowsY + lines[0].length * 34 + 10;
-        return panY + linesY + lines[p].length * lineStep + (progress >= 0 && p == 1 ? 56 : 0) + 26;
+        if (p == 0) return panY + playRowsY + 10;
+        if (p == 1) return panY + 96 + 130 + (progress >= 0 ? 52 : 0) + 14;   // the status block, then the progress bar when importing
+        return panY + linesY + lines[p].length * lineStep + 26;
     }
 
     @Override protected void onDraw(Canvas c) {
@@ -371,20 +421,46 @@ final class LauncherView extends View {
             tri.reset(); tri.moveTo(backR.left + 40, backR.centerY() - 11); tri.lineTo(backR.left + 40, backR.centerY() + 11); tri.lineTo(backR.left + 24, backR.centerY()); tri.close(); c.drawPath(tri, pp);
         }
 
+        if (infoText != null) {   // a reference text instead of the rows
+            toy.text(c, infoTitle, panX + panW / 2, panY + 130, 36, 0xffffe46a, 0);
+            float y = panY + 190;
+            for (String l : infoText) { toy.text(c, l, panX + panW / 2, y, 30, 0xffffffff, 0); y += 48; }
+            toy.text(c, "Press any button to close", panX + panW / 2, y + 30, 24, Toy.alpha(0xffffffff, 0.6f), 0);
+            return;
+        }
         if (page == 0) drawPlayCard(c);
+        else if (page == 1) drawFilesBlock(c);
         else {
             float y = panY + linesY;
             for (String l : lines[page]) { toy.text(c, l, panX + panW / 2, y + 20, 28, 0xffd6e2ff, 0); y += lineStep; }
-            if (page == 1 && progress >= 0) {
-                y += 8;
-                r2.set(panX + 56, y, panX + panW - 56, y + 34);
-                pp.setColor(0xff0a1438); c.drawRoundRect(r2, 17, 17, pp);
-                r2.set(panX + 60, y + 4, panX + 60 + Math.max(30, (panW - 120) * Math.min(1, progress)), y + 30);
-                pp.setColor(0xffff9a1f); c.drawRoundRect(r2, 13, 13, pp);
-                toy.text(c, progressLabel, panX + panW / 2, y + 27, 22, 0xffffffff, 0);
-            }
         }
         drawRows(c);
+    }
+
+    /** Game files: found or not, which language sets are installed (chips), their size, and the import progress. */
+    private void drawFilesBlock(Canvas c) {
+        float x = panX + 48, y = panY + 96, w = panW - 96, h = 130;
+        r.set(x, y, x + w, y + h);
+        pp.setShader(null); pp.setStyle(Paint.Style.FILL); pp.setColor(0xff0e1d48); c.drawRoundRect(r, 28, 28, pp);
+        boolean ok = hasGame;
+        pp.setColor(ok ? 0xff3cc84a : 0xffffd81f); c.drawCircle(x + 40, y + 38, 14, pp);
+        toy.text(c, ok ? "Game found" : "No game files yet", x + 70, y + 52, 38, 0xffffffff, -1);
+        if (sizeText != null && !sizeText.isEmpty()) toy.text(c, sizeText, x + w - 30, y + 50, 28, 0xffd6e2ff, 1);
+        for (int i = 0; i < 5; i++) {   // installed languages as chips
+            boolean on = i < installed.length && installed[i];
+            r2.set(x + 30 + i * 96, y + 76, x + 30 + i * 96 + 84, y + 116);
+            toy.block(c, r2, 16, 4, on ? Toy.TOYS[(i * 2 + 3) % 8] : 0xff2a3a68, false);
+            toy.text(c, Toy.LANG_LABELS[i], r2.centerX(), r2.centerY() + 11, 30, on ? 0xffffffff : 0xff6f7fae, 0);
+        }
+        toy.text(c, ok ? "Installed languages" : "Choose a disc folder, image or .zip below", x + 30 + 5 * 96 + 14, y + 104, 24, Toy.alpha(0xffffffff, 0.7f), -1);
+        if (progress >= 0) {
+            float py = y + h + 10;
+            r2.set(x, py, x + w, py + 34);
+            pp.setColor(0xff0a1438); c.drawRoundRect(r2, 17, 17, pp);
+            r2.set(x + 4, py + 4, x + 4 + Math.max(30, (w - 8) * Math.min(1, progress)), py + 30);
+            pp.setColor(0xffff9a1f); c.drawRoundRect(r2, 13, 13, pp);
+            toy.text(c, progressLabel, x + w / 2, py + 27, 22, 0xffffffff, 0);
+        }
     }
 
     private void drawPlayCard(Canvas c) {
@@ -399,8 +475,6 @@ final class LauncherView extends View {
             toy.text(c, cap[i], x + cw / 2, y + 38 * k, 24, Toy.alpha(0xffffffff, 0.8f), 0);
             toy.text(c, val[i], x + cw / 2, y + 100 * k, 56 * (0.6f + 0.4f * k), cols[i] == 0xffffd81f ? 0xffffe46a : 0xffffffff, 0);
         }
-        float ly = panY + dotY + 50;   // the language line(s) under the level dots
-        for (String l : lines[0]) { toy.text(c, l, panX + panW / 2, ly, 26, 0xffd6e2ff, 0); ly += 34; }
         // one dot per level: lit = unlocked, ring = the one that will be played
         float dy = panY + dotY;
         int n = Math.max(total, 1);
@@ -416,12 +490,18 @@ final class LauncherView extends View {
     private void drawRows(Canvas c) {
         Row[] rs = rows[page];
         float top = rowsTop(page);
-        int vs = vis();
+        int end = visEnd();
         if (scroll > 0) { pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffe46a); tri.reset(); tri.moveTo(panX + panW - 70, top - 8); tri.lineTo(panX + panW - 40, top - 8); tri.lineTo(panX + panW - 55, top - 26); tri.close(); c.drawPath(tri, pp); }
-        if (scroll + vs < rs.length) { pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffe46a); float by = top + vs * (rowH + rowGap) - 2; tri.reset(); tri.moveTo(panX + panW - 70, by); tri.lineTo(panX + panW - 40, by); tri.lineTo(panX + panW - 55, by + 18); tri.close(); c.drawPath(tri, pp); }
-        for (int i = scroll; i < Math.min(rs.length, scroll + vs); i++) {
+        if (end < rs.length) { pp.setStyle(Paint.Style.FILL); pp.setColor(0xffffe46a); float by = top + span(scroll, end) - 2; tri.reset(); tri.moveTo(panX + panW - 70, by); tri.lineTo(panX + panW - 40, by); tri.lineTo(panX + panW - 55, by + 18); tri.close(); c.drawPath(tri, pp); }
+        for (int i = scroll; i < end; i++) {
             Row rw = rs[i];
-            float y = top + (i - scroll) * (rowH + rowGap), s = rowScale[Math.min(i, rowScale.length - 1)];
+            float y = top + span(scroll, i), s = rowScale[Math.min(i, rowScale.length - 1)];
+            if (rw.header) {   // small caps section header with a rule
+                toy.text(c, rw.label.toUpperCase(), panX + 60, y + 28, 24, Toy.alpha(PAGE_COL[page], 1f), -1);
+                float tw = toy.measure(rw.label.toUpperCase(), 24);
+                pp.setStyle(Paint.Style.FILL); pp.setColor(Toy.alpha(PAGE_COL[page], 0.5f)); c.drawRect(panX + 76 + tw, y + 17, panX + panW - 60, y + 20, pp);
+                continue;
+            }
             boolean sel = col == 1 && i == row;
             float cx = panX + panW / 2, cy = y + rowH / 2;
             c.save(); c.translate(cx, cy); c.scale(s, s); c.translate(-cx, -cy);

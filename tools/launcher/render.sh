@@ -8,5 +8,5 @@ trap 'rm -rf "$build"' EXIT
 out=${1:-"$here/../../.shots/launch"}
 mkdir -p "$out"
 src="$here/../../android/app/src/main/java/io/github/sirbilliams/rollerbot"
-javac -nowarn -d "$build" $(find "$here/shim" -name '*.java') "$src/Toy.java" "$src/LauncherView.java" "$src/CompanionView.java" "$src/Native.java"
+javac -nowarn -d "$build" $(find "$here/shim" -name '*.java') "$src/Toy.java" "$src/LauncherView.java" "$src/CompanionView.java" "$src/Native.java" "$src/LauncherBottomView.java"
 timeout 300 java -Djava.awt.headless=true -cp "$build" io.github.sirbilliams.rollerbot.RenderLauncher "$out"

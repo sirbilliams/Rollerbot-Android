@@ -484,6 +484,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
     std::string want = envs("RB_LANG") ? envs("RB_LANG") : (save_ ? save_->lang : "");
     for (auto& l : langs_) if (l.second == dir_) lang_ = l.first;
     if (!want.empty() && !envs("RB_DATA_FIXED")) for (auto& l : langs_) if (l.first == want && l.second != dir_) { dir_ = l.second; lang_ = l.first; }
+    if (save_ && !lang_.empty()) save_->lang = lang_;   // the launcher reads it back after the game
   }
   void cycleLanguage(int d) {
     if (langs_.size() < 2) return;

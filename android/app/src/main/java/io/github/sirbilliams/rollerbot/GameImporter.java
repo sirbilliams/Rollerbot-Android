@@ -137,6 +137,8 @@ final class GameImporter {
     }
 
     /** The folder holding Rollerbot.exe for the active language (searched up to 4 levels deep, case-insensitive), or null. */
+    static File findRootIn(File dir) { return find(dir, 0); }
+
     static File findGameRoot(Context c) { return find(langDir(c, activeLang(c)), 0); }
 
     private static File find(File dir, int depth) {

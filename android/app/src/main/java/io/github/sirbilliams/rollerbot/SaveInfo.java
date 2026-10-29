@@ -14,6 +14,7 @@ import java.io.IOException;
  */
 final class SaveInfo {
     int reached = 1, lastLevel = 1, lastScore, highScore;
+    String lang = "";   // the language set the game last ran with
 
     static File dir(Context c) { return new File(c.getFilesDir(), "save"); }
 
@@ -24,9 +25,10 @@ final class SaveInfo {
             while ((l = r.readLine()) != null) {
                 int eq = l.indexOf('=');
                 if (eq < 0) continue;
+                String k = l.substring(0, eq);
+                if (k.equals("lang")) { s.lang = l.substring(eq + 1).trim(); continue; }
                 int v;
                 try { v = Integer.parseInt(l.substring(eq + 1).trim()); } catch (NumberFormatException e) { continue; }
-                String k = l.substring(0, eq);
                 if (k.equals("reached")) s.reached = Math.max(1, v);
                 else if (k.equals("last")) s.lastLevel = v;
                 else if (k.equals("score")) s.lastScore = v;

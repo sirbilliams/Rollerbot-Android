@@ -113,5 +113,8 @@ if [ -z "$RB_DATA" ]; then
     exit 1
 fi
 export RB_DATA
+RB_LANGS=""    # every installed set, for the in-game Game language switch
+for l in $LANGS; do r=$(lang_root "$l"); [ -n "$r" ] && RB_LANGS="${RB_LANGS:+$RB_LANGS;}$l=$r"; done
+export RB_LANGS RB_LANG="$LANG_WANT"
 cd "$RB_DATA" || exit 1
 exec /app/bin/rollerbot "$@"

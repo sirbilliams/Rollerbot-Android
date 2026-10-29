@@ -23,10 +23,12 @@ final class CompanionView extends View {
         void restart();
         void level(int n);
         void widescreen(int mode);
+        void volume(int pct);
+        void language(int idx);
         int reached();
     }
 
-    static final String[] TABS = { "Now", "Levels", "Screen" };
+    static final String[] TABS = { "Now", "Levels", "Settings" };
     static final String[] WS = { "Fill", "Side panels", "Stretch", "Original 4:3" };
     private static final int[] TAB_COL = { 0xff3cc84a, 0xffff9a1f, 0xff2f8df0 };
     private static final float W = 1240, H = 1080, GROUND = 930;
@@ -60,7 +62,8 @@ final class CompanionView extends View {
     private void button(Canvas c, String label, String value, float x, float y, float w, float h, int face, boolean glow, Runnable a) {
         r.set(x, y, x + w, y + h);
         toy.block(c, r, 26, 9, face, glow);
-        toy.text(c, label, value == null ? x + w / 2 : x + 36, y + h / 2 + 14, 40, 0xffffffff, value == null ? 0 : -1);
+        float ls = Math.min(40, 40 * (w - 24) / Math.max(1, toy.measure(label, 40)));
+        toy.text(c, label, value == null ? x + w / 2 : x + 36, y + h / 2 + 14 * ls / 40, ls, 0xffffffff, value == null ? 0 : -1);
         if (value != null) toy.text(c, value, x + w - 36, y + h / 2 + 13, 34, 0xffffe46a, 1);
         if (a != null) { hit.add(new RectF(x, y, x + w, y + h + 9)); act.add(a); }
     }
@@ -159,17 +162,35 @@ final class CompanionView extends View {
         if (st.levels.length == 0) toy.text(c, "Start the game to list its levels.", 90, 450, 34, 0xffd6e2ff, -1);
     }
 
+    /** Settings: the launcher's Display, Sound and Language items under the same names. */
     private void drawScreen(Canvas c) {
         panel(c, 50, 280, 1140, 620, TAB_COL[2]);
-        toy.text(c, "Widescreen", 90, 360, 56, 0xffffffff, -1);
+        header(c, "Display", 90, 340);
+        toy.text(c, "Widescreen", 90, 400, 34, 0xffffffff, -1);
         for (int i = 0; i < WS.length; i++) {
             final int m = i;
-            button(c, WS[i], null, 90 + (i % 2) * 550, 395 + (i / 2) * 112, 520, 90, i == Math.floorMod(st.widescreen, 4) ? 0xff2f8df0 : 0xff2e4fa6, i == Math.floorMod(st.widescreen, 4),
-                    new Runnable() { @Override public void run() { host.widescreen(m); } });
+            boolean on = i == Math.floorMod(st.widescreen, 4);
+            button(c, WS[i], null, 90 + i * 272, 420, 258, 76, on ? 0xff2f8df0 : 0xff2e4fa6, on, new Runnable() { @Override public void run() { host.widescreen(m); } });
         }
-        toy.text(c, "Controls", 90, 680, 44, 0xffffffff, -1);
-        String[] cl = { "Move: D-pad or left stick", "Jump: A or X       Menu: Start", "Keyboard: arrows, Enter, Space, Esc" };
-        for (int i = 0; i < cl.length; i++) toy.text(c, cl[i], 90, 735 + i * 44, 30, 0xffd6e2ff, -1);
+        header(c, "Sound", 90, 560);
+        toy.text(c, "Volume", 90, 620, 34, 0xffffffff, -1);
+        button(c, "-", null, 300, 570, 120, 76, 0xff2e4fa6, false, new Runnable() { @Override public void run() { host.volume(Math.max(0, st.volume - 10)); } });
+        toy.text(c, st.volume + "%", 595, 622, 44, 0xffffe46a, 0);
+        button(c, "+", null, 770, 570, 120, 76, 0xff2e4fa6, false, new Runnable() { @Override public void run() { host.volume(Math.min(100, st.volume + 10)); } });
+        header(c, "Language", 90, 710);
+        toy.text(c, "Game language", 90, 780, 30, 0xffffffff, -1);
+        String[] lb = Toy.LANG_LABELS;
+        for (int i = 0; i < 5; i++) {
+            final int li = i;
+            boolean has = (st.langMask & (1 << i)) != 0, on = i == st.lang;
+            button(c, lb[i], null, 440 + i * 146, 730, 135, 76, has ? (on ? 0xff2f8df0 : 0xff2e4fa6) : 0xff39466e, on, has ? new Runnable() { @Override public void run() { host.language(li); } } : null);
+        }
+    }
+
+    private void header(Canvas c, String s, float x, float y) {
+        toy.text(c, s.toUpperCase(), x, y, 24, TAB_COL[2], -1);
+        float w = toy.measure(s.toUpperCase(), 24);
+        pp.setStyle(Paint.Style.FILL); pp.setColor(Toy.alpha(TAB_COL[2], 0.5f)); c.drawRect(x + 16 + w, y - 11, 1150, y - 8, pp);
     }
 
     @Override public boolean onTouchEvent(MotionEvent e) {

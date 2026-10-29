@@ -33,6 +33,11 @@ public class RollerActivity extends SDLActivity {
             Os.setenv("RB_WIDESCREEN", PortPrefs.WIDESCREEN[PortPrefs.widescreen(this)], true);
             File game = GameImporter.findGameRoot(this);
             if (game != null) Os.setenv("RB_DATA", game.getPath(), true);
+            StringBuilder langs = new StringBuilder();   // every installed set, for the in-game Game language switch
+            boolean[] inst = GameImporter.installed(this);
+            for (int i = 0; i < inst.length; i++) { File d = inst[i] ? GameImporter.langDir(this, i) : null; File root = d == null ? null : GameImporter.findRootIn(d); if (root != null) langs.append(langs.length() > 0 ? ";" : "").append(PortPrefs.LANG_DIRS[i]).append("=").append(root.getPath()); }
+            Os.setenv("RB_LANGS", langs.toString(), true);
+            Os.setenv("RB_LANG", PortPrefs.LANG_DIRS[GameImporter.activeLang(this)], true);
             Os.setenv("RB_SAVE", SaveInfo.dir(this).getPath(), true);
             Os.setenv("RB_VOLUME", String.valueOf(PortPrefs.volume(this)), true);
             Os.setenv("RB_PADJUMP", PortPrefs.CONTROLS_ENV[PortPrefs.controls(this)], true);
