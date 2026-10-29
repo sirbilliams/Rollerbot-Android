@@ -317,6 +317,15 @@ std::shared_ptr<Brain> compileBrain(const std::vector<std::string>& lines, std::
             ps.p = 2; s.k = Stmt::Assign; s.slot = it->second; s.e = ps.parseOr();
             if (!ps.err.empty() || ps.cur().t != T::End) { report(ln, ps.err.empty() ? "junk after expression" : ps.err); continue; }
             b->code.push_back(std::move(s));
+        } else if (t[0].t == T::Id && vars.count(kw) && t.size() >= 2 &&
+                   t[1].t == T::Op && (t[1].s == "=>" || t[1].s == "=<")) {
+            // Retail level004 has bare comparisons where assignments were likely intended.
+            // Compatibility policy: evaluate and discard, preserving comparison semantics.
+            // 0x4125f0 / 0x414880 handle statements/expressions; exact malformed-source
+            // behaviour in the original compiler remains unverified. Never infer a clamp.
+            s.k = Stmt::Call; s.e = ps.parseOr();
+            if (!ps.err.empty() || ps.cur().t != T::End) { report(ln, ps.err.empty() ? "junk after comparison" : ps.err); continue; }
+            b->code.push_back(std::move(s));
         } else if (t[0].t == T::Id && t.size() >= 2 && t[1].t == T::Op && t[1].s == "(") {
             ps.p = 0; s.k = Stmt::Call; s.e = ps.parseOr();
             if (!ps.err.empty() || ps.cur().t != T::End) { report(ln, ps.err.empty() ? "junk after call" : ps.err); continue; }
@@ -386,7 +395,7 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
     } catch (const std::exception&) {}
     if (loaded_) { world_.globals = carriedGlobals; world_.randomPtr = carriedRandom; world_.updateCount = carriedUpdates; }
     loaded_ = true;
-    programs_.clear(); compileErrors_.clear(); events_.clear(); unknown_.clear(); collisionMap_.clear(); hitColors_.clear();
+    programs_.clear(); compileErrors_.clear(); events_.clear(); unknown_.clear(); unknownCounts_.clear(); collisionMap_.clear(); hitColors_.clear();
     std::map<std::uint32_t, const BrainRecord*> bm;
     for (auto& b : pd.brains) bm[b.objectIndex] = &b;
     for (size_t i = 0; i < pd.objects.size(); ++i) {
@@ -904,6 +913,7 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
     if (n == "pause") return 0; // 0x40ff20 blocks for a key in the original; GUESS: no-op headless
     // --- flow
     if (n == "exit") { if (w.exitCode == -1) { w.exitCode = arg(0); ev("exit " + std::to_string(arg(0)), self); } return 0; }
+    ++unknownCounts_[name];
     if (unknown_.insert(name).second) ev("UNIMPLEMENTED " + name, self);
     return 0;
 }

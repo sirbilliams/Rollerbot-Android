@@ -135,6 +135,7 @@ public:
     const std::vector<TickEvent>& events() const { return events_; }
     void clearEvents() { events_.clear(); }
     const std::set<std::string>& unknownCommands() const { return unknown_; }
+    const std::map<std::string, std::uint64_t>& unknownCommandCounts() const { return unknownCounts_; }
     bool finished() const { return world_.exitCode != -1; }
     const std::vector<std::string>& compileErrors() const { return compileErrors_; }
     size_t collisionPairs() const { return collisionMap_.size(); }
@@ -150,6 +151,7 @@ private:
     std::vector<std::shared_ptr<Brain>> programs_;
     std::vector<TickEvent> events_;
     std::set<std::string> unknown_;
+    std::map<std::string, std::uint64_t> unknownCounts_;
     std::vector<std::int8_t> sinus_;       // sinus.bin, byte table
     std::vector<std::int32_t> sinusBig_;   // sinusbig.bin
     std::vector<std::int32_t> randomTab_;  // random.bin

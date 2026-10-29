@@ -1,4 +1,4 @@
-// Headless brain runner: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys 57,29] [--summary]
+// Headless brain runner: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys 57,29] [--summary] [--sweep]
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -11,13 +11,14 @@ using namespace rb;
 static double normalizedDeg(std::int32_t a) { return double(((a % kTurn) + kTurn) % kTurn) / kDg; }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { std::fprintf(stderr, "usage: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys a,b] [--summary]\n"); return 2; }
+    if (argc < 3) { std::fprintf(stderr, "usage: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys a,b] [--summary] [--sweep]\n"); return 2; }
     std::string game = argv[1], proj = argv[2];
-    int ticks = 100; bool trace = false, summary = false; std::set<int> keys;
+    int ticks = 100; bool trace = false, summary = false, sweep = false; std::set<int> keys;
     std::map<int,std::set<int>> schedule;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--ticks") && i + 1 < argc) ticks = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--trace")) trace = true;
+        else if (!std::strcmp(argv[i], "--sweep")) sweep = true;
         else if (!std::strcmp(argv[i], "--summary")) summary = true;
         else if (!std::strcmp(argv[i], "--keys") && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t;
             while (std::getline(ss,t,';')) {
@@ -43,9 +44,22 @@ int main(int argc, char** argv) {
         snap();
         std::array<std::int32_t, kMaxGlobals> pg = vm.world().globals;
         std::size_t evShown = 0;
-        for (int t = 0; t < ticks && !vm.finished(); ++t) {
+        int livesLost = 0, nonfinite = 0;
+        std::map<int, int> exits;
+        for (int t = 0; t < ticks && (sweep || !vm.finished()); ++t) {
+            if (sweep) vm.world().exitCode = -1;
+            int oldLives = vm.world().globals[220];
             auto ki=schedule.find(t); if(ki!=schedule.end()) { input.keys=ki->second; input.any=!input.keys.empty(); }
             vm.tick();
+            if (sweep) {
+                livesLost += std::max(0, oldLives - vm.world().globals[220]);
+                if (vm.finished()) ++exits[vm.world().exitCode];
+                for (const auto& e : vm.world().elements) {
+                    auto tr = elementTransform(e);
+                    for (int axis = 0; axis < 3; ++axis)
+                        nonfinite += !std::isfinite(tr.pos[axis]) || !std::isfinite(tr.rotDeg[axis]) || !std::isfinite(tr.scale[axis]);
+                }
+            }
             if (trace) {
                 std::printf("tick %d\n", t + 1);
                 const auto& w = vm.world();
@@ -59,6 +73,7 @@ int main(int argc, char** argv) {
                 for (; evShown < evs.size(); ++evShown) std::printf("  event e%d %s\n", evs[evShown].element, evs[evShown].text.c_str());
                 snap();
             }
+            if (sweep) { vm.clearEvents(); audio.log.clear(); evShown = 0; }
         }
         const auto& w = vm.world();
         for (const auto& e : w.elements) if(e.id&8) std::printf("player %u pos %.3f %.3f %.3f yaw %.3f radius %d collided %u\n",e.index,e.pos.x/double(kMt),e.pos.y/double(kMt),e.pos.z/double(kMt),normalizedDeg(e.rot.y),e.radius,e.collided);
@@ -69,6 +84,14 @@ int main(int argc, char** argv) {
             std::printf("ticks %u exit %d elements-on %d collision-pairs %zu unknown-commands:", w.tickCount, w.exitCode, on, vm.collisionPairs());
             for (auto& u : vm.unknownCommands()) std::printf(" %s", u.c_str());
             std::printf("\n");
+        }
+        if (sweep) {
+            std::printf("SWEEP ticks=%u compile=%zu nonfinite=%d lives_lost=%d exits=", w.tickCount, vm.compileErrors().size(), nonfinite, livesLost);
+            for (const auto& x : exits) std::printf("%d:%d,", x.first, x.second);
+            std::printf(" unknown=");
+            for (const auto& x : vm.unknownCommandCounts()) std::printf("%s:%llu,", x.first.c_str(), (unsigned long long)x.second);
+            std::printf("\n");
+            if (!vm.compileErrors().empty() || nonfinite || !vm.unknownCommands().empty() || w.tickCount != unsigned(ticks)) return 1;
         }
     } catch (const std::exception& ex) { std::fprintf(stderr, "error: %s\n", ex.what()); return 1; }
     return 0;

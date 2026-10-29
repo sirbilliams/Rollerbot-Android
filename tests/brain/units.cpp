@@ -27,6 +27,15 @@ int main() {
     pd.brains[0].lines={"var a=0", "a=8*6/4", "if collision(element,2)0", "global_set(1,99)", "endif"};
     BrainVM expressions; expressions.load(pd,"/nonexistent"); expressions.world().elements[0].collided=2;
     expressions.tick(); CHECK(expressions.world().elements[0].vars[0]==8); CHECK(expressions.world().globals[1]==99);
+    // Tolerate retail's bare comparison statements without changing their variable.
+    pd.brains[0].lines={"var rot=90", "rot=>80", "rot=<30", "global_set(7,rot)"};
+    BrainVM bareComparison; bareComparison.load(pd,"/nonexistent");
+    CHECK(bareComparison.compileErrors().empty()); bareComparison.tick();
+    CHECK(bareComparison.world().globals[7]==90);
+    bareComparison.callCommand("missing_test_command",{},0);
+    bareComparison.callCommand("missing_test_command",{},0);
+    CHECK(bareComparison.unknownCommandCounts().at("missing_test_command")==2);
+    bareComparison.load(pd,"/nonexistent"); CHECK(bareComparison.unknownCommandCounts().empty());
     auto ref=kElementRefBase;
     expressions.world().elements.push_back(expressions.world().elements[0]);
     expressions.world().elements[1].index=1; expressions.world().elements[1].pos={2*kMt,2*kMt,3*kMt};
