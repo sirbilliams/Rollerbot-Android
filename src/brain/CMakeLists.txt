@@ -1,0 +1,7 @@
+add_library(rb_brain STATIC Brain.cpp)
+target_compile_features(rb_brain PUBLIC cxx_std_17)
+target_include_directories(rb_brain PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(rb_brain PUBLIC rb_assets)
+if(BUILD_TESTING)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../tests/brain ${CMAKE_CURRENT_BINARY_DIR}/tests)
+endif()
