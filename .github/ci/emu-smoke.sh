@@ -38,7 +38,7 @@ sleep 1; adb logcat -d -s Rollerbot:I > "$OUT/launcher-nav.txt"
 PAGES=$(grep -c "launcher page" "$OUT/launcher-nav.txt" || true)
 [ "${PAGES:-0}" -ge 3 ] || fail "DPAD did not change launcher pages ($PAGES page changes logged, want >= 3)"
 # and the screenshots differ (pages have different eras/art)
-[ "$(md5sum "$OUT"/launcher-page-*-down.png | awk '{print $1}' | sort -u | wc -l)" -ge 3 ] || fail "launcher screenshots look identical"
+[ "$(md5sum "$OUT"/launcher-page-[0-9].png | awk '{print $1}' | sort -u | wc -l)" -ge 3 ] || fail "launcher screenshots look identical"
 
 # 2. Game activity with no game data: must show the stub/import prompt, not crash
 adb shell am start -W -n "$PKG/.RollerActivity" || fail "game activity failed to start (not exported? built without -PemuAbi?)"
