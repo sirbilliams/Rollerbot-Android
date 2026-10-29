@@ -1,5 +1,10 @@
 add_executable(rb_assets_validate validate.cpp)
 target_link_libraries(rb_assets_validate PRIVATE rb_assets)
 set(RB_GAME_DIR "${CMAKE_SOURCE_DIR}/.game" CACHE PATH "Private game installation")
-add_test(NAME assets COMMAND rb_assets_validate "${RB_GAME_DIR}")
-set_tests_properties(assets PROPERTIES TIMEOUT 180)
+# The validator needs a real install; CI has none, so it only registers when the game is present.
+if(EXISTS "${RB_GAME_DIR}/Rollerbot.exe")
+ add_test(NAME assets COMMAND rb_assets_validate "${RB_GAME_DIR}")
+ set_tests_properties(assets PROPERTIES TIMEOUT 180)
+else()
+ message(STATUS "assets test skipped: no game at ${RB_GAME_DIR}")
+endif()
