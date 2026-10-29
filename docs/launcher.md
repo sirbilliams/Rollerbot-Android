@@ -12,7 +12,7 @@ from the left behind a bright edge, the ball hops, and the card slides in. Float
   "Import your game first".
 - **Import**: disc folder, image or .zip, language, remove (asks twice), progress bar. Same importer as before.
 - **Settings**: Widescreen (Fill, Side panels, Stretch, Original 4:3), Controls (A and X jump / A jumps / X jumps,
-  exported as RB_PADJUMP), Bottom screen on/off. Changes apply when the game starts.
+  exported as RB_PADJUMP), Bottom screen on/off, Volume (master, steps of 10, exported as RB_VOLUME). Changes apply when the game starts.
 - **About**: version, legal line.
 Input: D-pad / left stick (latched at 0.6, released under 0.3) move, A / Enter select, B / Back step back then quit;
 Left/Right adjust a row. Touch: tap a page button or row (tap the right part of an adjustable row to step up, the middle
@@ -33,12 +33,12 @@ level and menu-open flag) and sends pause, restart, level and widescreen request
   puts the saved value into global 100 on every level load and writes it back when a brain raises it (at most every 5 s,
   on level change, menu, suspend and exit). Other globals in the file are preserved, not restored (lives and score start fresh).
 - `rollerbot.cfg` (key=value): `reached` (highest level number unlocked, set when a level loads), `last` (level to
-  continue), `score`, `widescreen` (used when `RB_WIDESCREEN` is not set), `bottom`.
+  continue), `score`, `widescreen` (used when `RB_WIDESCREEN` is not set), `bottom`, `volume` (0-100; `RB_VOLUME` wins).
 - `RB_CONTINUE=1` starts at the last level instead of the title; `RB_LEVEL` still wins.
 
 ## Desktop pause menu (`src/game/Game.cpp`, `MenuRaster.*`)
 Esc (not on the title screen, where Esc still leaves as in the exe), P, Tab, or pad Start / Back opens it. Items: Resume,
-Restart level, Level (Left/Right over unlocked levels, Enter loads), Screen (widescreen mode, saved), Quit game. The
+Restart level, Level (Left/Right over unlocked levels, Enter loads), Screen (widescreen mode, saved), Volume (master, saved as `volume=`), Quit game. The
 game and audio freeze while it is open. The panel is rasterised on the CPU with the game's own font (`font.fnt`) into a
 640 x 480 canvas and drawn through the HUD overlay. `RB_MENU=<frame>` opens it for screenshots.
 

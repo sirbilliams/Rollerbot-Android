@@ -52,6 +52,60 @@ A recursive extension and RIFF-magic scan of **every regular file** in private `
 
 The sibling FFmpeg script was reviewed: its minimal build enables Bink only, which is not evidence that Rollerbot uses Bink. With no observed compressed codec, this lane implements a tiny BI_RGB 24/32-bit AVI + PCM 8/16-bit mono/stereo decoder. Other codecs fail explicitly; no guessed compressed decoder is shipped. It checks RIFF bounds, padding, format, dimensions, frame lengths and audio alignment. Movie audio is returned as stereo float PCM and can be passed to Audio::play. Frames have RGBA pixels and stream PTS. Movie mediaClock is the next decode PTS, not a wall clock; caller schedules frames against Audio::mediaClock and calls Movie::pause alongside pauseAll. EOF is decode=false; teardown clears all media.
 
+## What the game does with sound (verified, `src/game/SoundBank.*`)
+
+Evidence: `_free.c` 0x401753 (sound init), 0x40110e (start), 0x40c200 (`play_sound`), 0x40c440 (`stop_sound`), 0x40bff0 (`off`),
+0x40cc90 (`sound_rate_set`), 0x45bf90 (level start / resume), 0x4016ae (rate -> Hz), cross-checked with the asm and the 14 projects.
+
+- **No music subsystem.** Everything is a resident WAV inside a hashed `.dat`, owned by an element (one DirectSound buffer per element).
+  "Music" is just an element (the `Observer-DM!` camera, and in levels 3-9/13 a "Scenery" ambience) whose sound is flagged looping.
+  No CD audio, MIDI, streaming, panning or master volume exists. No project calls `sound_mode_set`, `sound_status`, `stop_sound_system` or
+  `restart_sound_system`. `listener(e)` is used only by the camera and has no audible effect (see 3D below).
+- **Sound spec** is project field 39 of an object: `rate/minDist/x/oneShot/volume`, e.g. `4096/2/50/1/-10`. rate 4096 = recorded pitch
+  (SetFrequency(nominal*rate>>12), clamped 100..100000 Hz; `sound_rate_set(e, r)` changes it and it persists). volume is dB, passed as
+  `dB*100` to SetVolume (0 = full, -25 = quiet; the editor says -100 = silence). oneShot = bit 0, copied to element flag 0x10:
+  0 = the sound **loops**, 1 = plays once. minDist is only used by 3D.
+- **When a sound starts.** `play_sound(e)` and `on(e)` both do SetCurrentPosition(0) + Play (loop unless oneShot): playing again restarts it,
+  never layers it. Initially-on elements with a looping sound start when the level starts (0x45bf90); one-shots do not. `off(e)` of an on
+  element stops a looping sound (a one-shot plays out). `stop_sound(e)` stops only if the element is on. Level change releases everything.
+- **Music/loops per level** (loop sounds on the camera, rate/volume from the spec): level1 title 5BFC2248 (52 s, vol 0); l3 3605735E (rate 3096, -10) plus
+  ambience EC6F622D (14 s); l4/l7 51F89F4C (3096, -6); l5 3605735E (4096, -10); l6/l10/l15 F5AB6CCC (-8); l8 D655EC69 (-7); l9 DD5CD494 (-10);
+  l11 58686051 (-8); l12 C057FE9C (-12); l13 EFED8DF9 (-15) plus 228822D4 (3096, -25); l14 5A847C69 plus two "Bots" loops. `sound_rate_set(camera, 5096)` speeds
+  the music up while global 212 = 1.
+- **Effects** (all one-shots, rate 2096..8096, volume 0..-25): jump = `Play-shadow` FC966A4D (-10), die 842C473D (only when speed points > 0), apple 7C6146F0,
+  rings/secret box 4F18F935, "50 pts" 89608B16 (`on`), Get-Ready CCFAF032. There is **no rolling sound**.
+- **3D is off.** 0x401753 sets DS3DMODE_DISABLE when option bits 11-12 (word 0xfe1c of the .col) are 0, and all 14 levels have them 0 (flags 0x3ad..0x5fd).
+  So distance attenuation, pan and Doppler never apply: volume is just the spec volume, centred. The primary buffer runs at 22 kHz (bits 9-10 = 2);
+  we mix at 48 kHz instead. The options dialog with "SOUND QUALITY" is the engine's developer menu, not a player option.
+- **Exe oddities kept on purpose:** `Get-Ready`'s brain calls `play_sound` every tick (30 Hz) for ~1.1 s while the banner slides, restarting
+  the 0.38 s sample each time (exactly what 0x40c200 does).
+
+## Implementation
+
+`SoundBank` (original code) parses the spec per element, keeps one voice per element and logs events. `rb::Audio` gained `speed(handle, ratio)`
+(pitch from rate), `masterVolume(hundredthsDB)` and `takePeak()`; `PCM::srcRate` carries the WAV's own rate. Hooks: `IAudio::on/off` (two lines in
+`Brain.cpp` for `on`/`off`, the only `src/brain` edit), `HostSink::on/off/setRate`.
+
+- `RB_AUDIO_DUMP=out.wav` mixes offline (no device) into a 48 kHz float32 stereo WAV, advancing exactly one 1/60 s update step per game update.
+- `RB_AUDIO_LOG=1` logs `AUDIO t=<audio clock> tick=<brain tick> start|stop|rate el=.. name=.. snd=.. why=play_sound|on|level|off|stop_sound loop vol rate`.
+- `RB_VOLUME=0..100` (launcher) sets the master volume; the pause menu "Volume" row (Left/Right/Enter, steps of 10) saves `volume=` in `rollerbot.cfg`.
+  Env wins over the saved value. **Master only**: the original has no music/effects split, only per-sound volumes. Android launcher Settings has a Volume row (`PortPrefs.volume`, exported as `RB_VOLUME`).
+- `tools/audio/analyze.py run.wav run.log [--assets dir]` (numpy) reports peak, RMS per 0.5 s, events, retriggers, music seams; `tools/audio/verify.sh` runs the two scenarios; `keys2rb.py` turns an rbbrain key schedule into `RB_KEYS`.
+
+## Verification results (Xvfb in omtbuild, `SDL_AUDIODRIVER=dummy`, offline dump)
+
+| run | result |
+|---|---|
+| level001, 3700 frames (title, then Space at frame 3500 -> level003) | music 5BFC2248 starts at t=0, RMS -21..-23 dBFS in all 123 windows (none silent), no discontinuity at the 52.25 s loop point (0.05x the p99.9 sample step); level3 music + ambience start at the level change (58.3 s). Peak -5.0 dBFS |
+| level003, 1800 frames, no input | music (3605735E at 0.756x -> 19.35 s loop) and ambience (14.19 s) loop, seams 0.05x and 1.2x p99.9 (no click), 0 silent windows, peak -4.4 dBFS, 0 samples at full scale |
+| level003, 2400 frames, recorded full route (`routes` lane) | apple pickups (7C6146F0, 8 apples, one sound each at 4.70 s, 5.13 s ...), jump (Play-shadow), ring + secret-box (4F18F935), die sound (PLAYER-1 x4), 50-pts `on` sound all fire once per event; peak -4.1 dBFS; level exit at tick 1146 loads level001 whose title music starts |
+| level003 + `RB_VOLUME=50` | RMS 6.02 dB lower than 100% (master gain works) |
+| pause menu | six items incl. `Volume: 100%` (screenshot `.shots/audio/menu.png`); the mix is frozen while it is open |
+
+Nothing clips (max |sample| 0.63 before the clamp). Sounds that "play twice": none by different elements in one tick; the only repeats are the exe's own
+`Get-Ready` retrigger above (one voice, restarted) - before this change the old HostAudio layered a new voice on every call.
+Not verifiable headless: the actual audio device path (SDL dummy only), and sample-accurate timing against a real exe run (no exe audio recording exists).
+
 ## Replacement behavior and limits
 
 Own SDL float-stereo callback mixer: shared immutable PCM, independent cursors, linear resampling, looping, clamped sum, DirectSound-style volume/pan units. Mutations and callback synchronize with a mutex; this is functional, not a hard real-time guarantee. WAV uses SDL_LoadWAV and SDL_AudioCVT. Stop discards a voice; play creates a new voice at sample zero. pauseAll freezes cursors and sample clock, intentionally suitable for platform suspension (original primary mute did not freeze). mediaClock counts produced frames, excluding pauses, and includes up to one SDL hardware buffer of latency.

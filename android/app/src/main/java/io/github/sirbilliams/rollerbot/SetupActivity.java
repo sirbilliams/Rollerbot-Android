@@ -116,7 +116,8 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         view.setRows(2, new LauncherView.Row[] {
             new LauncherView.Row("Widescreen", WS_NAMES[PortPrefs.widescreen(this)], true, true),
             new LauncherView.Row("Controls", PortPrefs.CONTROLS[PortPrefs.controls(this)], true, true),
-            new LauncherView.Row("Bottom screen", PortPrefs.companion(this) ? "On" : "Off", true, true) });
+            new LauncherView.Row("Bottom screen", PortPrefs.companion(this) ? "On" : "Off", true, true),
+            new LauncherView.Row("Volume", PortPrefs.volume(this) + "%", true, true) });
 
         view.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handhelds and desktop.",
                 "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version " + version());
@@ -155,6 +156,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         else if (page == 2 && row == 0) PortPrefs.setWidescreen(this, PortPrefs.widescreen(this) + dir);
         else if (page == 2 && row == 1) PortPrefs.setControls(this, PortPrefs.controls(this) + dir);
         else if (page == 2 && row == 2) PortPrefs.setCompanion(this, !PortPrefs.companion(this));
+        else if (page == 2 && row == 3) PortPrefs.setVolume(this, PortPrefs.volume(this) + 10 * dir);
         refresh();
     }
 

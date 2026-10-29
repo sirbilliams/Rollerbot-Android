@@ -69,6 +69,9 @@ struct HostAudio : IAudio {
   HostSink* sink = nullptr;
   void play(int e, const std::string& s) override { if (sink) sink->play(e, s); }
   void stop(int e) override { if (sink) sink->stop(e); }
+  void setRate(int e, int r) override { if (sink) sink->setRate(e, r); }
+  void on(int e) override { if (sink) sink->on(e); }
+  void off(int e) override { if (sink) sink->off(e); }
 };
 struct HostIn : IInput {
   HostInput* in = nullptr;

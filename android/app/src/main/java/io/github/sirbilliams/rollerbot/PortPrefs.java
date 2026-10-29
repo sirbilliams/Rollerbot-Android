@@ -15,6 +15,9 @@ final class PortPrefs {
     }
     static int widescreen(Context c) { return Math.floorMod(get(c).getInt("widescreen", 0), WIDESCREEN.length); }
     static void setWidescreen(Context c, int m) { get(c).edit().putInt("widescreen", Math.floorMod(m, WIDESCREEN.length)).apply(); }
+    /** Master volume in percent (steps of 10), exported as RB_VOLUME. */
+    static int volume(Context c) { return Math.max(0, Math.min(100, get(c).getInt("volume", 100))); }
+    static void setVolume(Context c, int pct) { get(c).edit().putInt("volume", Math.max(0, Math.min(100, pct))).apply(); }
     static final String[] CONTROLS = { "A and X jump", "A jumps", "X jumps" };
     static final String[] CONTROLS_ENV = { "both", "a", "x" };
     static int controls(Context c) { return Math.floorMod(get(c).getInt("controls", 0), CONTROLS.length); }

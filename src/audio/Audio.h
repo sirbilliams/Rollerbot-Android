@@ -5,7 +5,7 @@
 #include <vector>
 #include <string>
 namespace rb {
-struct PCM { int rate=48000; std::vector<float> stereo; };
+struct PCM { int rate=48000; int srcRate=48000; std::vector<float> stereo; };  // srcRate: the WAV's own sample rate (DirectSound nominal frequency)
 class Audio {
 public:
  using Handle=uint32_t;
@@ -15,6 +15,12 @@ public:
  Handle play(std::shared_ptr<const PCM>,bool loop=false); void stop(Handle); void loop(Handle,bool);
  // DirectSound units: volume [-10000,0], pan [-10000,10000]. Position in meters.
  void volume(Handle,int hundredthsDB); void pan(Handle,int hundredthsDB);
+ // Playback speed relative to nominal (DirectSound SetFrequency(f) is ratio f/nominal). 1 = original.
+ void speed(Handle,float ratio);
+ // Master gain in hundredths of dB [-10000,0] applied after the mix (user setting; 0 = unity). Not an original control.
+ void masterVolume(int hundredthsDB); int masterVolume() const;
+ // Largest |sample| of the unclamped mix since the last call (for headless checks).
+ float takePeak();
  void position(Handle,float x,float y,float z); void listener(float x,float y,float z);
  void pauseAll(); void resumeAll(); double mediaClock() const;
  // Same mixer as device callback. For offline use initialize with startDevice=false.

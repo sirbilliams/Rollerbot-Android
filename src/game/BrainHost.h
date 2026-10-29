@@ -24,6 +24,9 @@ struct HostSink {   // scene/audio side effects requested by brains
   virtual void backgroundColor(int /*r*/, int /*g*/, int /*b*/) {}
   virtual void play(int /*el*/, const std::string& /*sound*/) {}
   virtual void stop(int /*el*/) {}
+  virtual void setRate(int /*el*/, int /*q12*/) {}
+  virtual void on(int /*el*/) {}
+  virtual void off(int /*el*/) {}
 };
 struct HostInput {  // keyboard scancodes as the exe sees them (29 ctrl, 75/77 left/right, 57 space ...)
   virtual ~HostInput() = default;

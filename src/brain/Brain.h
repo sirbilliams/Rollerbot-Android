@@ -85,6 +85,8 @@ struct IAudio {
     virtual void play(int /*element*/, const std::string& /*sound*/) {}
     virtual void stop(int /*element*/) {}
     virtual void setRate(int /*element*/, int /*rate*/) {}
+    virtual void on(int /*element*/) {}    // on(): the exe starts the element's sound (0x40c020 -> 0x40110e)
+    virtual void off(int /*element*/) {}   // off() of an element that was on: stops a looping sound (0x40bff0)
 };
 struct IInput {
     virtual ~IInput() = default;

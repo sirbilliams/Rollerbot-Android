@@ -1,6 +1,7 @@
 #include "game/Game.h"
 #include "assets/Assets.h"
 #include "audio/Audio.h"
+#include "SoundBank.h"
 #include "game/BrainHost.h"
 #include "game/MenuRaster.h"
 #include "game/Save.h"
@@ -136,10 +137,19 @@ class RollerGame : public Game, public HostSink, public HostInput {
     std::string err;
     if (!scene_.init(&err)) { SDL_Log("scene init: %s", err.c_str()); return false; }
     try { store_.open(dir_); } catch (const std::exception& e) { SDL_Log("assets: %s", e.what()); return false; }
-    audioOk_ = audio_.init(48000, true);
-    if (!audioOk_) { audio_.init(48000, false); }
-    hudOk_ = hud_.init();
+    if (const char* v = envs("RB_AUDIO_DUMP")) {   // headless: mix offline to a float WAV, one update step at a time
+      audio_.init(48000, false);
+      audioOk_ = dump_.open(v, 48000);
+      if (!audioOk_) SDL_Log("audio dump: cannot write %s", v);
+    } else {
+      audioOk_ = audio_.init(48000, true);
+      if (!audioOk_) { audio_.init(48000, false); }
+    }
+    sounds_.reset(new SoundBank(audio_, store_));
     save_.reset(new GameSave(saveDirectory(plat_->prefDir())));
+    setVolume(envs("RB_VOLUME") ? std::atoi(envs("RB_VOLUME")) : (save_->volume >= 0 ? save_->volume : 100), false);
+    sounds_->setLog(envs("RB_AUDIO_LOG") != nullptr, [this] { return host_ ? host_->tickCount() : 0u; });
+    hudOk_ = hud_.init();
     SDL_Log("saves in %s (hi-score %d, reached level %d)", save_->dir().c_str(), save_->highScore(), save_->reached);
     if (save_->widescreen >= 0 && save_->widescreen <= 3 && !envs("RB_WIDESCREEN")) Bridge::requestWidescreen(save_->widescreen);
     if (envs("RB_CONTINUE") && save_->lastLevel > 1) { char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", save_->lastLevel); level_ = nm; }
@@ -162,6 +172,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
 
   void update(double dt) override {
     ++frame_;
+    if (audioOk_) dump_.advance(audio_, dt);
     using clk = std::chrono::steady_clock;
     auto now = clk::now();
     if (!t0_.time_since_epoch().count()) { t0_ = now; lastRender_ = now; }
@@ -216,6 +227,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (!statsDone_) logStats();
     flushSave(true);
     Bridge::publish(Status{});
+    dump_.close();
     audio_.shutdown();
   }
 
@@ -241,17 +253,12 @@ class RollerGame : public Game, public HostSink, public HostInput {
   // ---- HostSink
   void lightColor(int, int, int, int) override {}   // ambient is kept fully lit (see docs/game.md)
   void backgroundColor(int r, int g, int b) override { bg_ = {r / 255.f, g / 255.f, b / 255.f, 1}; }
-  void play(int el, const std::string& sound) override {
-    if (sound.empty() || sound.find("null_") != std::string::npos) return;
-    auto it = pcm_.find(sound);
-    if (it == pcm_.end()) {
-      std::shared_ptr<const PCM> pcm;
-      try { Bytes b = store_.read(sound.rfind("./", 0) == 0 ? sound.substr(2) : sound); pcm = audio_.loadWav(b.data(), b.size()); } catch (const std::exception&) {}
-      it = pcm_.emplace(sound, pcm).first;
-    }
-    if (it->second) voices_[el] = audio_.play(it->second, false);
-  }
-  void stop(int el) override { auto it = voices_.find(el); if (it != voices_.end()) audio_.stop(it->second); }
+  // The element's sound spec comes from the project (SoundBank); the name the brain passes is the same file.
+  void play(int el, const std::string&) override { if (sounds_) sounds_->play(el, "play_sound"); }
+  void stop(int el) override { if (sounds_) sounds_->stop(el, "stop_sound"); }
+  void setRate(int el, int q12) override { if (sounds_) sounds_->setRate(el, q12); }
+  void on(int el) override { if (sounds_) sounds_->play(el, "on"); }
+  void off(int el) override { if (sounds_) sounds_->off(el); }
 
   // ---- HostInput
   bool key(int sc) override {
@@ -363,11 +370,16 @@ class RollerGame : public Game, public HostSink, public HostInput {
     std::vector<int> g;
     if (carryGlobals && host_) g = host_->globals();
     for (auto& s : slots_) if (s.frame) scene_.destroyFrame(s.frame);
-    slots_.clear(); voices_.clear(); hudTex_.clear();
+    slots_.clear(); hudTex_.clear();
     host_.reset(new BrainHost);
     std::string err;
     if (!host_->load(dir_, level, this, this, &err)) { SDL_Log("load %s: %s", level.c_str(), err.c_str()); host_.reset(); return false; }
     if (!g.empty()) host_->setGlobals(g);
+    try {
+      ProjectData pd = ProjectData::load(store_, level.find('.') == std::string::npos ? level + ".prj" : level);
+      sounds_->load(pd, [this](int el) { return host_ && el >= 0 && el < host_->count() && host_->view(el).on; });
+      sounds_->startLevel();
+    } catch (const std::exception& e) { SDL_Log("sounds %s: %s", level.c_str(), e.what()); }
     level_ = level; pendingExit_ = false;
     {   // the high score lives in global 100 (as the exe keeps it) and survives sessions
       std::vector<int> g2 = host_->globals();
@@ -417,7 +429,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
   }
   void closeMenu() { menuOpen_ = false; if (audioOk_ && !paused_) audio_.resumeAll(); }
   void updateMenu(const Input& in) {
-    const int kItems = 5;
+    const int kItems = 6;
     auto lv = unlocked();
     if (in.pressed(Action::Up)) { menuSel_ = (menuSel_ + kItems - 1) % kItems; menuDirty_ = true; }
     if (in.pressed(Action::Down)) { menuSel_ = (menuSel_ + 1) % kItems; menuDirty_ = true; }
@@ -429,6 +441,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
     }
     bool ok = in.pressed(Action::Accept) || in.pressed(Action::Jump);
     if (dx && menuSel_ == 3) cycleWidescreen(dx);
+    if (dx && menuSel_ == 4) setVolume(volume_ + 10 * dx, true);
     if (ok) {
       switch (menuSel_) {
         case 0: closeMenu(); break;
@@ -436,9 +449,18 @@ class RollerGame : public Game, public HostSink, public HostInput {
         case 2: { char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", menuLevel_);
                   if (store_.find(std::string(nm) + ".prj")) { closeMenu(); loadLevel(nm); } break; }
         case 3: cycleWidescreen(1); break;
-        case 4: flushSave(true); plat_->requestQuit(); break;
+        case 4: setVolume(volume_ >= 100 ? 0 : volume_ + 10, true); break;
+        case 5: flushSave(true); plat_->requestQuit(); break;
       }
     } else if (in.pressed(Action::Back) || in.pressed(Action::Pause) || in.pressed(Action::Menu)) closeMenu();
+  }
+  // Master volume in percent (not an original control: the exe only has per-sound volumes). Applied after the mix.
+  void setVolume(int pct, bool save) {
+    volume_ = std::clamp(pct, 0, 100);
+    int db = volume_ <= 0 ? -10000 : std::clamp(int(std::lround(2000.0 * std::log10(volume_ / 100.0))), -10000, 0);
+    audio_.masterVolume(db);
+    if (save && save_) { save_->volume = volume_; save_->touch(); }
+    menuDirty_ = true;
   }
   void cycleWidescreen(int d) {
     int m = (int(plat_->config().widescreen) + 4 + d) % 4;
@@ -452,7 +474,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
       MenuModel m;
       m.title = "Paused";
       m.items = {"Resume", "Restart level", menuLevel_ == 1 ? "Level: title screen" : "Level: " + std::to_string(menuLevel_),
-                 std::string("Screen: ") + wsName(wsShown_ >= 0 ? wsShown_ : int(plat_->config().widescreen)), "Quit game"};
+                 std::string("Screen: ") + wsName(wsShown_ >= 0 ? wsShown_ : int(plat_->config().widescreen)),
+                 "Volume: " + std::to_string(volume_) + "%", "Quit game"};
       m.selected = menuSel_;
       m.status = "Hi-score " + std::to_string(save_ ? save_->highScore() : 0);
       m.footer = "Arrows choose   Enter select   Esc back";
@@ -720,8 +743,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
   std::map<std::string, TextureId> tex_;
   std::map<std::string, float> texAspect_;
   std::map<std::string, HudTex> hudTex_;
-  std::map<std::string, std::shared_ptr<const PCM>> pcm_;
-  std::map<int, Audio::Handle> voices_;
+  std::unique_ptr<SoundBank> sounds_;
+  AudioDump dump_;
   std::vector<KeyScript> script_;
   std::map<long, std::string> shots_;
   LevelCfg cfg_;
@@ -737,6 +760,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
   bool cylAxisIsDir_ = std::getenv("RB_CYLUP") == nullptr;   // cylinders wrap around dir (game Y): checked on the alien/player faces
   long frame_ = 0;
   bool pendingExit_ = false, paused_ = false;
+  int volume_ = 100;
   std::vector<int> levels_;
   std::unique_ptr<GameSave> save_;
   int sinceSave_ = 0;
