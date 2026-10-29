@@ -1,16 +1,22 @@
-// Headless brain runner: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys 57,29] [--summary] [--sweep]
+// Headless brain runner: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys 57,29|@file] [--summary] [--sweep]
+// Whole game: rbbrain <gamedir> --route-chain <route-directory>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <fstream>
 #include <sstream>
 #include "brain/Brain.h"
 using namespace rb;
 static double normalizedDeg(std::int32_t a) { return double(((a % kTurn) + kTurn) % kTurn) / kDg; }
 
+int runFullRoutes(int, char**);
 int main(int argc, char** argv) {
+    if(argc==4&&!std::strcmp(argv[2], "--route-chain")){
+        char mode[]="--replay";char* args[]={argv[0],argv[1],argv[3],mode};return runFullRoutes(4,args);
+    }
     if (argc < 3) { std::fprintf(stderr, "usage: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys a,b] [--summary] [--sweep]\n"); return 2; }
     std::string game = argv[1], proj = argv[2];
     int ticks = 100; bool trace = false, summary = false, sweep = false; std::set<int> keys;
@@ -20,11 +26,13 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--trace")) trace = true;
         else if (!std::strcmp(argv[i], "--sweep")) sweep = true;
         else if (!std::strcmp(argv[i], "--summary")) summary = true;
-        else if (!std::strcmp(argv[i], "--keys") && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t;
+        else if (!std::strcmp(argv[i], "--keys") && i + 1 < argc) { std::string keyText=argv[++i];
+            if(!keyText.empty()&&keyText[0]=='@') { std::ifstream f(keyText.substr(1));if(!f){std::fprintf(stderr,"cannot open key file\n");return 2;}keyText.assign(std::istreambuf_iterator<char>(f),{}); }
+            std::stringstream ss(keyText); std::string t;
             while (std::getline(ss,t,';')) {
                 auto c=t.find(':'); int tick=c==std::string::npos ? 0 : std::atoi(t.c_str());
                 std::stringstream ks(c==std::string::npos ? t : t.substr(c+1)); std::string key;
-                while(std::getline(ks,key,',')) if(!key.empty()) schedule[tick].insert(std::atoi(key.c_str()));
+                while(std::getline(ks,key,',')) if(key.find_first_not_of(" \r\n\t")!=key.npos) schedule[tick].insert(std::atoi(key.c_str()));
                 if(!schedule.count(tick)) schedule[tick]={};
             } }
     }
