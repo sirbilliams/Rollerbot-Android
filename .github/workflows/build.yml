@@ -1,0 +1,125 @@
+name: Build
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android APK (arm64)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write          # to publish the "latest" release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK packages
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264" "cmake;3.22.1" > /dev/null
+
+      - name: Fetch SDL2 (pinned)
+        run: bash fetch-deps.sh
+
+      # A stable signing key from the repo secrets (if set), so each APK installs over the last one.
+      # Without it Gradle signs with a fresh debug key on every run (Android then refuses the update).
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.RB_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RB_KEYSTORE_PASSWORD }}
+        run: |
+          # No secret (or an unusable one) falls back to Gradle's debug key, so CI still produces an APK.
+          if [ -n "$KEYSTORE_B64" ]; then
+            # Pasted secrets often carry a stray newline or space: neither value contains whitespace.
+            PW=$(printf '%s' "$KEYSTORE_PASSWORD" | tr -d ' \t\r\n')
+            printf '%s' "$KEYSTORE_B64" | tr -d ' \t\r\n' | base64 -d > "$RUNNER_TEMP/rollerbot.keystore"
+            if ! keytool -list -keystore "$RUNNER_TEMP/rollerbot.keystore" -storepass "$PW" -alias rollerbot > /dev/null; then
+              echo "::warning::RB_KEYSTORE_B64 / RB_KEYSTORE_PASSWORD don't open the key: signed with the debug key instead"
+            else
+              echo "RB_KEYSTORE=$RUNNER_TEMP/rollerbot.keystore" >> "$GITHUB_ENV"
+              echo "RB_KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+              echo "stable signing key: yes"
+            fi
+          else
+            echo "::warning::No RB_KEYSTORE_B64 secret: signed with a one-off debug key (won't install over an older APK)"
+          fi
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/debug/app-debug.apk out/Rollerbot.apk
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rollerbot-apk
+          path: out/Rollerbot.apk
+          if-no-files-found: error
+
+      # Every push to main replaces the "latest" pre-release, so the newest APK is always at
+      # https://github.com/<owner>/<repo>/releases/download/latest/Rollerbot.apk
+      - name: Publish as the latest build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest out/Rollerbot.apk --prerelease --target "$GITHUB_SHA" \
+            --title "Latest build ($(date -u +%Y-%m-%d) ${GITHUB_SHA::7})" \
+            --notes "Built automatically from ${GITHUB_SHA::7}: $(git log -1 --format=%s)"
+
+      # A pushed version tag (v1.0, v1.1...) makes a permanent release named after it, with the APK and
+      # the tag's section of CHANGELOG.md ("## v1.0" up to the next "## ") as its notes. The "latest"
+      # pre-release above is untouched; releases/latest/download/... points at the newest tag release.
+      - name: Publish the release for a version tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          awk -v h="## $TAG" '$0 == h { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Rollerbot $TAG (no CHANGELOG.md section for this tag)" > notes.md
+          cat notes.md
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" out/Rollerbot.apk --clobber
+          else
+            gh release create "$TAG" out/Rollerbot.apk --verify-tag \
+              --title "Rollerbot $TAG" --notes-file notes.md
+          fi
+
+  linux:
+    name: Linux desktop build + tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libgles-dev libegl-dev cmake xvfb libgl1-mesa-dri
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j"$(nproc)"
+      # Game-file-free tests only (the game's files are never in the repo).
+      - name: Tests
+        run: timeout 600 xvfb-run -a ctest --test-dir build --output-on-failure
+      - name: Shell smoke run (Xvfb, 120 frames, screenshot)
+        run: |
+          mkdir -p .shots
+          RB_FRAMES=120 RB_SHOT=.shots/shell.png timeout 120 xvfb-run -a ./build/src/platform/rollerbot
+          test -s .shots/shell.png

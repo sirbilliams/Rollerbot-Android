@@ -1,0 +1,4 @@
+# Pinned third-party sources (fetched by fetch-deps.sh, not stored in this repo)
+SDL_REPO=https://github.com/libsdl-org/SDL
+SDL_REF=release-2.32.10
+SDL_COMMIT=5d249570393f7a37e037abf22cd6012a4cc56a71
