@@ -20,6 +20,10 @@ if(ANDROID)
 endif()
 if(RB_ANDROID)
   set(RB_DESKTOP OFF)
+  # Desktop-only programs: lane tests and tools would need SDL_main on Android.
+  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(RB_AUDIO_TESTS OFF CACHE BOOL "" FORCE)
+  set(RB_SCENE_TOOLS OFF CACHE BOOL "" FORCE)
 endif()
 
 if(RB_ANDROID)
