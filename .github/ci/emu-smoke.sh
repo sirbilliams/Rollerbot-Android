@@ -22,11 +22,11 @@ adb shell pm grant "$PKG" android.permission.POST_NOTIFICATIONS 2>/dev/null || t
 adb shell am start -W -n "$PKG/.SetupActivity" || fail "launcher failed to start"
 sleep 8; shot launcher-00
 alive "$PKG" || fail "app process not running after launcher start"
-# The launcher's own controls: Up/Down picks a page in the left column, Right opens its panel, B/Back leaves it
-# (Left adjusts a setting row, so it does not always return).
+# The launcher's own controls in its default Tabs layout: Left/Right moves the tabs, Down or A opens the card,
+# B/Back leaves it (Left/Right inside the card adjust setting rows).
 for i in 1 2 3; do
-  key KEYCODE_DPAD_DOWN;  shot "launcher-page-$i"
-  key KEYCODE_DPAD_RIGHT; shot "launcher-page-$i-open"
+  key KEYCODE_DPAD_RIGHT; shot "launcher-page-$i"
+  key KEYCODE_DPAD_DOWN;  shot "launcher-page-$i-open"
   key KEYCODE_BACK
 done
 key KEYCODE_DPAD_CENTER; shot launcher-enter
