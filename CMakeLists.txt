@@ -47,7 +47,7 @@ if(RB_TESTS AND NOT RB_ANDROID)
 endif()
 
 add_subdirectory(src/platform)
-foreach(lane assets scene brain audio ui)
+foreach(lane assets scene brain audio game ui)
   if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${lane}/CMakeLists.txt)
     add_subdirectory(src/${lane})
   endif()

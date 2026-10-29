@@ -10,10 +10,10 @@ target_compile_options(rb_platform PRIVATE -Wall -Wextra)
 if(RB_ANDROID)
   # SDLActivity loads libSDL2.so then this library and calls SDL_main.
   add_library(rollerbot SHARED main.cpp)
-  target_link_libraries(rollerbot PRIVATE rb_platform)
+  target_link_libraries(rollerbot PRIVATE rb_platform rb_game)
 elseif(RB_DESKTOP)
   add_executable(rollerbot main.cpp)
-  target_link_libraries(rollerbot PRIVATE rb_platform)
+  target_link_libraries(rollerbot PRIVATE rb_platform rb_game)
   install(TARGETS rollerbot RUNTIME DESTINATION bin)
 endif()
 
