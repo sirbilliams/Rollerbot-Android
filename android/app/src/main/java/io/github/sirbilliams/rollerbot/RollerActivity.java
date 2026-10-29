@@ -34,6 +34,7 @@ public class RollerActivity extends SDLActivity {
             File game = GameImporter.findGameRoot(this);
             if (game != null) Os.setenv("RB_DATA", game.getPath(), true);
             Os.setenv("RB_SAVE", SaveInfo.dir(this).getPath(), true);
+            Os.setenv("RB_VOLUME", String.valueOf(PortPrefs.volume(this)), true);
             Os.setenv("RB_PADJUMP", PortPrefs.CONTROLS_ENV[PortPrefs.controls(this)], true);
             int lvl = getIntent().getIntExtra("level", 0);   // from the launcher: Continue / Play level (0 = the title screen)
             if (lvl > 0) Os.setenv("RB_LEVEL", String.format(java.util.Locale.US, "level%03d", lvl), true);

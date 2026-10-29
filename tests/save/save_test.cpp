@@ -11,11 +11,11 @@ int main() {
     rb::GameSave s(d);
     CHECK(s.highScore() == 0 && s.reached == 1);
     CHECK(s.submitScore(500) && !s.submitScore(400));
-    s.reached = 7; s.lastLevel = 6; s.widescreen = 2; s.bottomScreen = false;
+    s.reached = 7; s.lastLevel = 6; s.widescreen = 2; s.bottomScreen = false; s.volume = 40;
     CHECK(s.save());
   }
   rb::GameSave t(d);
-  CHECK(t.highScore() == 500 && t.reached == 7 && t.lastLevel == 6 && t.widescreen == 2 && !t.bottomScreen);
+  CHECK(t.highScore() == 500 && t.reached == 7 && t.lastLevel == 6 && t.widescreen == 2 && !t.bottomScreen && t.volume == 40);
   CHECK(std::filesystem::file_size(d + "/globvars.dat") == 8192);
   setenv("RB_SAVE", "/x/y", 1);
   CHECK(rb::saveDirectory("") == "/x/y");

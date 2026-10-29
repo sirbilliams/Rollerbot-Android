@@ -823,8 +823,8 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
     if (n == "track") { Element* b = el(1); if (e0 && b) { e0->rot.x = pitchTo(*e0, *b,impl_->atan); e0->rot.y = yawTo(*e0, *b,impl_->atan); } return 0; }
     if (n == "track_yr") { Element* b = el(1); if (e0 && b) e0->rot.y = yawTo(*e0, *b,impl_->atan); return 0; }
     // --- flags
-    if (n == "on") { if (e0) { e0->flags |= kFlagOn; ev("on", e0->index); if (scene_) scene_->elementEvent(e0->index, "on"); } return 0; }
-    if (n == "off") { if (e0) { if (e0->flags & kFlagOn) ev("off", e0->index); e0->flags &= ~std::uint32_t(kFlagOn); if (scene_) scene_->elementEvent(e0->index, "off"); } return 0; }
+    if (n == "on") { if (e0) { e0->flags |= kFlagOn; ev("on", e0->index); if (scene_) scene_->elementEvent(e0->index, "on"); if (audio_) audio_->on(int(e0->index)); } return 0; }
+    if (n == "off") { if (e0) { if (e0->flags & kFlagOn) { ev("off", e0->index); if (audio_) audio_->off(int(e0->index)); } e0->flags &= ~std::uint32_t(kFlagOn); if (scene_) scene_->elementEvent(e0->index, "off"); } return 0; }
     if (n == "show") { if (e0) { e0->flags |= kFlagVisible; if (scene_) scene_->elementEvent(e0->index, "show"); } return 0; }
     if (n == "hide") { if (e0) { e0->flags &= ~std::uint32_t(kFlagVisible); if (scene_) scene_->elementEvent(e0->index, "hide"); } return 0; }
     if (n == "box_collisions_on") { if(e0) e0->flags |= kFlagSphere2; return 0; }

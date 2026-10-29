@@ -41,6 +41,7 @@ GameSave::GameSave(const std::string& dir) : dir_(dir), d_(std::make_shared<Impl
     else if (k == "score") lastScore = v;
     else if (k == "widescreen") widescreen = v;
     else if (k == "bottom") bottomScreen = v != 0;
+    else if (k == "volume") volume = v;
   }
 }
 
@@ -60,7 +61,7 @@ bool GameSave::save() {
     {
       std::ofstream o(t, std::ios::trunc);
       o << "reached=" << reached << "\nlast=" << lastLevel << "\nscore=" << lastScore << "\nwidescreen=" << widescreen
-        << "\nbottom=" << (bottomScreen ? 1 : 0) << "\n";
+        << "\nbottom=" << (bottomScreen ? 1 : 0) << "\nvolume=" << volume << "\n";
       if (!o) throw std::runtime_error("write failed");
     }
     fs::rename(t, p);

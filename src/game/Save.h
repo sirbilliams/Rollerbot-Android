@@ -22,6 +22,7 @@ class GameSave {
   int lastScore = 0;
   int widescreen = -1;                  // rb::Widescreen, -1 = never chosen
   bool bottomScreen = true;
+  int volume = -1;                      // master volume 0..100 (%), -1 = never chosen
   bool dirty() const { return dirty_; }
   void touch() { dirty_ = true; }
   bool save();                          // false (and a log line) when the folder is not writable
