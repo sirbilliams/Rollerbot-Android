@@ -1,0 +1,50 @@
+# Rollerbot: A Time Journey port. Top-level build (owned by the platform lane).
+#   cmake -S . -B build && make -C build -j8 && ctest --test-dir build
+# Android builds this through android/app/jni/CMakeLists.txt (RB_ANDROID=ON, SDL2 from add_subdirectory).
+cmake_minimum_required(VERSION 3.16)
+project(rollerbot C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
+option(RB_ANDROID "Build libmain-style shared game library for the Android app" OFF)
+option(RB_DESKTOP "Build the desktop executable" ON)
+option(RB_TESTS "Build tests" ON)
+if(ANDROID)
+  set(RB_ANDROID ON)
+endif()
+if(RB_ANDROID)
+  set(RB_DESKTOP OFF)
+endif()
+
+if(RB_ANDROID)
+  # SDL2 comes from add_subdirectory(SDL) in android/app/jni; GLES2 is native.
+  find_library(RB_GLES2 GLESv2 REQUIRED)
+  find_library(RB_LOG log REQUIRED)
+else()
+  find_package(SDL2 REQUIRED)
+  find_library(RB_GLES2 NAMES GLESv2 REQUIRED)
+endif()
+if(NOT TARGET SDL2::SDL2)
+  if(TARGET SDL2)
+    add_library(SDL2::SDL2 ALIAS SDL2)
+  else()
+    message(FATAL_ERROR "SDL2 target not found")
+  endif()
+endif()
+
+if(RB_TESTS AND NOT RB_ANDROID)
+  enable_testing()
+endif()
+
+add_subdirectory(src/platform)
+foreach(lane assets scene brain audio)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/${lane}/CMakeLists.txt)
+    add_subdirectory(src/${lane})
+  endif()
+endforeach()
