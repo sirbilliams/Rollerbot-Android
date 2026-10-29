@@ -18,7 +18,10 @@ folder of its files). Not affiliated with or endorsed by the rights holders.
   panel (status, level select, settings), pauses when the lid closes. Not yet tested on a device.
 - Linux Flatpak builds and runs.
 
-Next: device testing on the Thor, full playthroughs of every level, high scores and polish.
+- High score and progress persist between sessions; pause menu (Esc / Start): resume, restart, level, screen, quit.
+- New code-drawn Android launcher and bottom-screen panel (docs/launcher.md).
+
+Next: device testing on the Thor and full playthroughs of every level.
 
 ![Level 3 at 1920x1080](docs/screenshots/level3-desert.jpg)
 
@@ -30,12 +33,12 @@ Next: device testing on the Thor, full playthroughs of every level, high scores 
 
 ```sh
 cmake -S . -B build && cmake --build build -j8 && ctest --test-dir build
-RB_DATA=/path/to/game ./build/src/platform/rollerbot   # the game (test pattern without RB_DATA); Esc quits
+RB_DATA=/path/to/game ./build/src/platform/rollerbot   # the game (test pattern without RB_DATA); Esc opens the pause menu
 ```
 
 Needs SDL2 and GLES2 dev packages. Environment: `RB_WIDESCREEN=fill|panels|stretch|off`, `RB_FULLSCREEN=1`,
 `RB_SIZE=1280x720`, `RB_FRAMES=N` (exit after N frames), `RB_SHOT=out.png` (screenshot of the last frame),
-`RB_DATA=<game folder>`. Headless: `RB_SHOT=s.png xvfb-run -a ./build/src/platform/rollerbot`.
+`RB_DATA=<game folder>`, `RB_SAVE=<save folder>` (default `~/.local/share/rollerbot`, or `$XDG_DATA_HOME/rollerbot`), `RB_CONTINUE=1`, `RB_LEVEL=level005`. Headless: `RB_SHOT=s.png xvfb-run -a ./build/src/platform/rollerbot`.
 
 ## Build (Android APK)
 

@@ -265,7 +265,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
     const Input& in = plat_->input();
     switch (sc) {
       case 29: return in.held(Action::Action2) || in.held(Action::Jump);
-      case 57: return in.held(Action::Accept) || in.held(Action::Jump);
+      case 57: return padJump_ == 'a' ? in.held(Action::Accept) : padJump_ == 'x' ? in.held(Action::Jump) : (in.held(Action::Accept) || in.held(Action::Jump));
       case 28: return in.held(Action::Accept);
       case 75: return in.held(Action::Left);
       case 77: return in.held(Action::Right);
@@ -743,6 +743,7 @@ class RollerGame : public Game, public HostSink, public HostInput {
   bool menuOpen_ = false, menuDirty_ = false;
   int menuSel_ = 0, menuLevel_ = 1, wsShown_ = -1;
   GLuint menuTex_ = 0, dimTex_ = 0;
+  char padJump_ = std::getenv("RB_PADJUMP") ? std::getenv("RB_PADJUMP")[0] : 'b';   // RB_PADJUMP=a|x|both: which pad button jumps (launcher setting)
 };
 
 }  // namespace

@@ -15,6 +15,10 @@ final class PortPrefs {
     }
     static int widescreen(Context c) { return Math.floorMod(get(c).getInt("widescreen", 0), WIDESCREEN.length); }
     static void setWidescreen(Context c, int m) { get(c).edit().putInt("widescreen", Math.floorMod(m, WIDESCREEN.length)).apply(); }
+    static final String[] CONTROLS = { "A and X jump", "A jumps", "X jumps" };
+    static final String[] CONTROLS_ENV = { "both", "a", "x" };
+    static int controls(Context c) { return Math.floorMod(get(c).getInt("controls", 0), CONTROLS.length); }
+    static void setControls(Context c, int i) { get(c).edit().putInt("controls", Math.floorMod(i, CONTROLS.length)).apply(); }
     static final String[] LANG_DIRS = { "english", "french", "german", "spanish", "italian" };
     static final String[] LANG_LABELS = { "EN", "FR", "DE", "ES", "IT" };
     static int lang(Context c) { return Math.floorMod(get(c).getInt("lang", 0), LANG_DIRS.length); }
