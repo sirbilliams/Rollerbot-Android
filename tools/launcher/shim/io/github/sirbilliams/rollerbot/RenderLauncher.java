@@ -17,7 +17,7 @@ public final class RenderLauncher {
   LauncherView v = new LauncherView(new Context(), none); v.setTestSize(1920, 1080);
   v.setPlay(true, 5, 14775, 3200, 5, 14, 5);
   v.setLevels(new int[] { 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 }, 5);
-  v.setFiles(new boolean[] { true, true, false, false, true }, "3 sets, 1.2 GB");
+  v.setFiles(new boolean[] { true, true, false, false, true }, "3 sets, 78 MB");
   LauncherView.Row R = null;
   v.setLines(0, "Play");
   v.setRows(0, new LauncherView.Row[] { new LauncherView.Row("Continue", "Level 5", true, false), new LauncherView.Row("New game", "from the title", true, false), new LauncherView.Row("Play level", "5", true, true), new LauncherView.Row("DE isn't installed", "Game files", true, false) });
