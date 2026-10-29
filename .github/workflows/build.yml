@@ -117,7 +117,7 @@ jobs:
           cmake --build build -j"$(nproc)"
       # Game-file-free tests only (the game's files are never in the repo).
       - name: Tests
-        run: timeout 600 ctest --test-dir build --output-on-failure
+        run: timeout 600 xvfb-run -a ctest --test-dir build --output-on-failure
       - name: Shell smoke run (Xvfb, 120 frames, screenshot)
         run: |
           mkdir -p .shots
