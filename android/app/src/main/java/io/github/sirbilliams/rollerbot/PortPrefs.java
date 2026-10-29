@@ -18,6 +18,9 @@ final class PortPrefs {
     /** Master volume in percent (steps of 10), exported as RB_VOLUME. */
     static int volume(Context c) { return Math.max(0, Math.min(100, get(c).getInt("volume", 100))); }
     static void setVolume(Context c, int pct) { get(c).edit().putInt("volume", Math.max(0, Math.min(100, pct))).apply(); }
+    /** TEMPORARY, for review: launcher layout 0 classic, 1 = A (tabs + card), 2 = B (button stack). L1 / R1 / L cycles it. */
+    static int layout(Context c) { return Math.floorMod(get(c).getInt("layout", 1), 3); }
+    static void setLayout(Context c, int l) { get(c).edit().putInt("layout", Math.floorMod(l, 3)).apply(); }
     static final String[] CONTROLS = { "A and X jump", "A jumps", "X jumps" };
     static final String[] CONTROLS_ENV = { "both", "a", "x" };
     static int controls(Context c) { return Math.floorMod(get(c).getInt("controls", 0), CONTROLS.length); }

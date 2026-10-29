@@ -390,10 +390,17 @@ final class Toy {
     }
 
     /** A floating toy block / ball in front of the world, drifting with the scroll. */
-    void floaters(Canvas c, float w, float gy, float t) {
+    void floaters(Canvas c, float w, float gy, float t) { floaters(c, w, gy, t, false); }
+
+    void floaters(Canvas c, float w, float gy, float t, boolean margins) {
         for (int i = 0; i < 7; i++) {
             float x = wrap(hash(i + 70) * (w + 400) - t * (40 + i * 6), w + 400) - 200;
             float y = 150 + hash(i + 80) * (gy - 420) + (float) Math.sin(t * 1.1f + i * 1.7f) * 22;
+            if (margins) {   // centred layouts: only in the outer margins, bobbing in place
+                if (i > 5) continue;
+                x = i % 2 == 0 ? 80 + hash(i + 70) * 120 : w - 200 + hash(i + 70) * 120;
+                y = 200 + (i / 2) * 210 + hash(i + 80) * 60 + (float) Math.sin(t * 1.1f + i * 1.7f) * 22;
+            }
             float s = 24 + hash(i + 90) * 26;
             int col = TOYS[(i * 3) % TOYS.length];
             if (i % 2 == 0) cube(c, x, y, s, col, t * 0.6f + i); else sphere(c, x, y, s * 0.85f, col, -1);

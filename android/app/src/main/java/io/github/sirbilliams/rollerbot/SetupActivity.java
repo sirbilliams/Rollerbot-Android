@@ -31,6 +31,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         view = new LauncherView(this, this);
+        view.setLayout(PortPrefs.layout(this));
         setContentView(view);
         view.requestFocus();
         refresh();
@@ -46,6 +47,12 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
 
     // The view takes keys and sticks itself; these make sure they reach it even when focus drifts.
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
+        int kc = e.getKeyCode();
+        if (e.getAction() == KeyEvent.ACTION_DOWN && e.getRepeatCount() == 0 && (kc == KeyEvent.KEYCODE_BUTTON_L1 || kc == KeyEvent.KEYCODE_BUTTON_R1 || kc == KeyEvent.KEYCODE_L)) {
+            PortPrefs.setLayout(this, PortPrefs.layout(this) + (kc == KeyEvent.KEYCODE_BUTTON_L1 ? -1 : 1));   // temporary: switch layouts for review
+            view.setLayout(PortPrefs.layout(this));
+            return true;
+        }
         if (e.getAction() == KeyEvent.ACTION_DOWN && view.onKeyDown(e.getKeyCode(), e)) return true;
         return e.getAction() == KeyEvent.ACTION_UP && isHandled(e.getKeyCode()) || super.dispatchKeyEvent(e);
     }

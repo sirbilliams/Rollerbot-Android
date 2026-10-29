@@ -17,10 +17,10 @@ public final class RenderLauncher {
   LauncherView v = new LauncherView(new Context(), none); v.setTestSize(1920, 1080);
   v.setPlay(true, 5, 14775, 3200, 5, 14, 5);
   v.setRows(0, new LauncherView.Row[] { new LauncherView.Row("Continue", "Level 5", true, false), new LauncherView.Row("New game", "from the title", true, false), new LauncherView.Row("Play level", "5", true, true) });
-  v.setLines(1, "Import your game", "Bring your own disc: pick its folder, or an image (.iso / .bin) or .zip.", "Game found: 408 files, English.");
-  v.setRows(1, new LauncherView.Row[] { new LauncherView.Row("Import from disc folder", "", true, false), new LauncherView.Row("Import from image or .zip", "", true, false), new LauncherView.Row("Game language", "EN", true, true), new LauncherView.Row("Remove imported game", "", true, false) });
+  v.setLines(1, "Import your game", "Game found. Importing again replaces it.", "Every language on the disc is installed; the one chosen below opens first.");
+  v.setRows(1, new LauncherView.Row[] { new LauncherView.Row("Import from disc folder", "", true, false), new LauncherView.Row("Import from image or .zip", "", true, false), new LauncherView.Row("Preferred language", "EN", true, true), new LauncherView.Row("Remove imported game", "", true, false) });
   v.setLines(2, "Settings", "Move: D-pad or left stick     Jump: A or X", "Menu: Start (pause, restart, level, screen)", "Keyboard: arrows, Enter, Space, Esc");
-  v.setRows(2, new LauncherView.Row[] { new LauncherView.Row("Widescreen", "Fill", true, true), new LauncherView.Row("Controls", "A and X jump", true, true), new LauncherView.Row("Bottom screen", "On", true, true) });
+  v.setRows(2, new LauncherView.Row[] { new LauncherView.Row("Widescreen", "Fill", true, true), new LauncherView.Row("Controls", "A and X jump", true, true), new LauncherView.Row("Bottom screen", "On", true, true), new LauncherView.Row("Volume", "100%", true, true), new LauncherView.Row("Game language", "EN", true, true) });
   v.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handheld and desktop.", "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version 0.55 (October 2026)");
   v.showPage(page);
   return v;
@@ -69,6 +69,18 @@ public final class RenderLauncher {
  public static void main(String[] a) throws Exception {
   verify();
   String out = a[0]; new File(out).mkdirs();
+  String[] names2 = { "play", "import", "settings", "about" };
+  Canvas scratch2 = new Canvas(Bitmap.createBitmap(1920, 1080, Bitmap.Config.ARGB_8888));
+  for (int lay = 1; lay <= 2; lay++) {
+   String pre = lay == 1 ? "A_" : "B_";
+   for (int p = 0; p < 4; p++) {
+    clock = 40000; SystemClock.testNow = clock;
+    LauncherView v = make(0); v.setLayout(lay); frames(v, 5, scratch2);
+    v.showPage(p); frames(v, 70, scratch2);
+    if (lay == 2) { shot(v, out + "/" + pre + names2[p] + "_menu.png", 1920, 1080); v.onKeyDown(android.view.KeyEvent.KEYCODE_DPAD_RIGHT, new android.view.KeyEvent()); frames(v, 70, scratch2); }
+    shot(v, out + "/" + pre + names2[p] + ".png", 1920, 1080);
+   }
+  }
   String[] ctabs = { "now", "levels", "screen" };
   Bitmap cs = Bitmap.createBitmap(1240, 1080, Bitmap.Config.ARGB_8888); Canvas cc = new Canvas(cs);
   for (int i = 0; i < 3; i++) { clock = 40000; SystemClock.testNow = clock; CompanionView v = companion(0, false); frames(v, 3, cc); v.showTab(i); frames(v, 70, cc); shot(v, out + "/bottom-" + ctabs[i] + ".png", 1240, 1080); }
@@ -77,7 +89,7 @@ public final class RenderLauncher {
   String[] names = { "play", "import", "settings", "about" };
   for (int p = 0; p < 4; p++) {
    clock = 40000; SystemClock.testNow = clock;
-   LauncherView v = make(0); frames(v, 5, sc);
+   LauncherView v = make(0); v.setLayout(0); frames(v, 5, sc);
    v.showPage(p); frames(v, 70, sc);
    shot(v, out + "/launcher-" + names[p] + ".png", 1920, 1080);
   }
