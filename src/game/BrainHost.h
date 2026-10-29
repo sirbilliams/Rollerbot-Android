@@ -14,6 +14,7 @@ struct ElemView {
   float rotDeg[3] = {0, 0, 0};  // x, y, z; child offset already added
   float scale[3] = {1, 1, 1};
   float flat[2] = {1, 1};
+  bool teleported = false;      // moved implausibly far this tick: do not interpolate
   bool on = false, visible = false, translucent = false, child = false;
 };
 
@@ -39,7 +40,11 @@ class BrainHost {
   bool load(const std::string& gameDir, const std::string& project, HostSink* sink, HostInput* in, std::string* err);
   int advance(double dtSeconds);   // fixed 30 Hz brain ticks
   int count() const;
-  ElemView view(int i) const;
+  ElemView view(int i) const;      // state after the latest tick
+  // State blended between the previous and latest tick by alpha() (0..1) for display-rate rendering.
+  ElemView interpolated(int i) const;
+  double alpha() const;
+  int credits(int i) const;        // element credits/score register (+0x5c)
   int exitCode() const;
   unsigned tickCount() const;
   std::vector<int> globals() const;            // 2048 game-state globals; carried across level loads

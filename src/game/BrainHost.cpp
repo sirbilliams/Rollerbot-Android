@@ -85,6 +85,8 @@ struct BrainHost::Impl {
   HostAudio audio;
   HostIn input;
   BrainVM vm;
+  std::vector<ElemView> prev;   // views before the latest tick
+  double acc = 0;
 };
 
 BrainHost::BrainHost() : d_(new Impl) {}
@@ -105,7 +107,38 @@ bool BrainHost::load(const std::string& gameDir, const std::string& project, Hos
     return false;
   }
 }
-int BrainHost::advance(double dt) { return d_->vm.advance(dt); }
+int BrainHost::advance(double dt) {
+  const double step = 1.0 / kTicksPerSecond;
+  d_->acc += dt;
+  int n = 0;
+  while (d_->acc >= step && n < 8) {
+    d_->prev.resize(count());
+    for (int i = 0; i < count(); ++i) d_->prev[i] = view(i);
+    d_->vm.tick();
+    d_->acc -= step;
+    ++n;
+  }
+  if (d_->acc > step) d_->acc = step;
+  return n;
+}
+double BrainHost::alpha() const { return d_->acc * kTicksPerSecond; }
+int BrainHost::credits(int i) const { return d_->vm.world().elements[i].credits; }
+ElemView BrainHost::interpolated(int i) const {
+  ElemView c = view(i);
+  if (size_t(i) >= d_->prev.size()) return c;
+  const ElemView& p = d_->prev[i];
+  float a = float(alpha());
+  float dx = c.pos[0] - p.pos[0], dy = c.pos[1] - p.pos[1], dz = c.pos[2] - p.pos[2];
+  if (dx * dx + dy * dy + dz * dz > 30.f * 30.f || p.on != c.on) return c;   // teleport / on-off edge
+  for (int k = 0; k < 3; ++k) {
+    c.pos[k] = p.pos[k] + (c.pos[k] - p.pos[k]) * a;
+    float dr = c.rotDeg[k] - p.rotDeg[k];
+    dr -= 360.f * std::floor(dr / 360.f + 0.5f);   // shortest way round
+    if (std::fabs(dr) < 90.f) c.rotDeg[k] = p.rotDeg[k] + dr * a;
+    c.scale[k] = p.scale[k] + (c.scale[k] - p.scale[k]) * a;
+  }
+  return c;
+}
 int BrainHost::count() const { return int(d_->vm.world().elements.size()); }
 int BrainHost::exitCode() const { return d_->vm.world().exitCode; }
 unsigned BrainHost::tickCount() const { return d_->vm.world().tickCount; }
@@ -122,7 +155,8 @@ ElemView BrainHost::view(int i) const {
   v.child = child;
   Vec3 r = e.rot;
   if (child) { r.x += e.childRot.x; r.y += e.childRot.y; r.z += e.childRot.z; }  // parent rot + stored offset
-  v.pos[0] = float(e.pos.x) / kMt; v.pos[1] = float(e.pos.y) / kMt; v.pos[2] = float(e.pos.z) / kMt;
+  const float pu = (e.type == 5 || e.type == 8) ? 1.f : float(kMt);   // overlays are in pixels
+  v.pos[0] = float(e.pos.x) / pu; v.pos[1] = float(e.pos.y) / pu; v.pos[2] = float(e.pos.z) / pu;
   v.rotDeg[0] = float(r.x) / kDg; v.rotDeg[1] = float(r.y) / kDg; v.rotDeg[2] = float(r.z) / kDg;
   for (int k = 0; k < 3; ++k) v.scale[k] = float(e.scale[k]) / 1000.0f;
   v.flat[0] = float(e.flatScale[0]); v.flat[1] = float(e.flatScale[1]);

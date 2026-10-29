@@ -384,7 +384,10 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
         Element e;
         e.index = std::uint32_t(i);
         e.name = o.name; e.model = o.model; e.sound = o.sound; e.type = o.type;
-        e.pos = {wrap(std::llround(o.position[0] * kMt)), wrap(std::llround(o.position[1] * kMt)), wrap(std::llround(o.position[2] * kMt))};
+        // 2D overlay elements (types 5 sprite, 8 counter) live in screen pixels: brains write raw pixel values
+        // (position_y_set(element,-50), position_y(element)=>199), so no metre scaling for them.
+        const double posScale = (o.type == 5 || o.type == 8) ? 1.0 : double(kMt);
+        e.pos = {wrap(std::llround(o.position[0] * posScale)), wrap(std::llround(o.position[1] * posScale)), wrap(std::llround(o.position[2] * posScale))};
         auto deg = [&](size_t f) { return o.fields.size() > f ? wrap(std::llround(std::atof(o.fields[f].c_str()) * kDg)) : 0; };
         e.rot = {deg(10), deg(11), deg(12)}; // fields 10..12 are rotation in degrees (guess from value ranges)
         e.id = std::uint32_t(fieldNum(o, 30));
@@ -401,6 +404,20 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
             for (auto& m : errs) compileErrors_.push_back("e" + std::to_string(i) + " " + o.name + " " + m);
             e.brain = int(programs_.size());
             e.vars = prog->init;
+            // Field 34 is the editor's variable-memory snapshot: "count/type/value/slot/..." in declaration order.
+            // type 7 = var (raw), 2 = userInt (raw), 3 = userMet (metres). userInt/userMet values set in the editor
+            // override the source defaults (e.g. the Score Counter's points per collision colour).
+            if (o.fields.size() > 34) {
+                std::vector<std::string> tok; std::string cur;
+                for (char ch : o.fields[34]) { if (ch == '/') { tok.push_back(cur); cur.clear(); } else cur += ch; }
+                tok.push_back(cur);
+                size_t n = tok.empty() ? 0 : size_t(std::atoi(tok[0].c_str()));
+                for (size_t k = 0; k < n && 1 + k * 3 + 2 < tok.size() && k < e.vars.size(); ++k) {
+                    int type = std::atoi(tok[1 + k * 3].c_str());
+                    std::int64_t val = std::atoll(tok[2 + k * 3].c_str());
+                    e.vars[k] = wrap(type == 3 ? val * kMt : val);
+                }
+            }
             programs_.push_back(prog);
         }
         world_.elements.push_back(std::move(e));
