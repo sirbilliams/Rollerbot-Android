@@ -38,7 +38,7 @@ std::optional<std::filesystem::path> AssetStore::find(const std::string& name) c
  require(!root_.empty(),"asset store not open");
  std::string n=name;std::replace(n.begin(),n.end(),'\\','/');
  auto lookup=[&](const std::string& s)->std::optional<std::filesystem::path>{
-  auto rel=std::filesystem::path(s).lexically_normal();if(rel.is_absolute())return {};for(auto& c:rel)if(c=="..")return {};
+  auto rel=std::filesystem::path(s).lexically_normal();if(rel.is_absolute())return {};for(const auto& c:rel)if(c=="..")return {};
   auto p=root_/rel;if(std::filesystem::is_regular_file(p))return p;
   if(rel.has_parent_path()&&rel.parent_path()!=".")return {};
   for(const auto& e:std::filesystem::directory_iterator(root_))if(e.is_regular_file()&&lower(e.path().filename().string())==lower(rel.filename().string()))return e.path();return {};
