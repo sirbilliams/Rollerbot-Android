@@ -1,0 +1,5 @@
+execute_process(COMMAND timeout 120 ${EXE} ${GAME} level001 --ticks 300 --trace OUTPUT_VARIABLE A RESULT_VARIABLE R1)
+execute_process(COMMAND timeout 120 ${EXE} ${GAME} level001 --ticks 300 --trace OUTPUT_VARIABLE B RESULT_VARIABLE R2)
+if(NOT R1 EQUAL 0 OR NOT R2 EQUAL 0 OR NOT A STREQUAL B OR A STREQUAL "")
+  message(FATAL_ERROR "level001 trace not stable")
+endif()
