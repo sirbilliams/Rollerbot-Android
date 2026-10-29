@@ -46,8 +46,39 @@ final class GameImporter {
         return new File(base, "game");
     }
 
-    /** The folder holding Rollerbot.exe (searched up to 4 levels deep, case-insensitive), or null. */
-    static File findGameRoot(Context c) { return find(gameDir(c), 0); }
+    /** files/game/<language>/: one whole game per language set the source had (english, french, ...). */
+    static File langDir(Context c, int lang) { return new File(gameDir(c), PortPrefs.LANG_DIRS[lang]); }
+
+    /** Which languages are installed (index = PortPrefs.LANG_DIRS). Moves a pre-language install (files/game/...) into its set first. */
+    static boolean[] installed(Context c) {
+        migrateLegacy(c);
+        boolean[] b = new boolean[PortPrefs.LANG_DIRS.length];
+        for (int i = 0; i < b.length; i++) b[i] = find(langDir(c, i), 0) != null;
+        return b;
+    }
+
+    /** The language the game runs in: the chosen one when installed, else the first installed one (never another one silently when it is installed). */
+    static int activeLang(Context c) { return LangSets.active(PortPrefs.lang(c), installed(c)); }
+
+    private static void migrateLegacy(Context c) {
+        File g = gameDir(c);
+        File[] kids = g.listFiles();
+        if (kids == null || kids.length == 0) return;
+        for (File k : kids) if (k.isDirectory() && (LangSets.index(k.getName()) >= 0 || k.getName().equals(".plain"))) return;   // already the new layout
+        File root = find(g, 0);
+        if (root == null) return;
+        String l = LangSets.langOfDirName(root.getName());
+        int i = l != null ? LangSets.index(l) : PortPrefs.lang(c);
+        File tmp = new File(c.getCacheDir(), "legacy-game");
+        deleteTree(tmp);
+        if (!root.renameTo(tmp)) return;
+        deleteTree(g);
+        g.mkdirs();
+        if (!tmp.renameTo(langDir(c, i))) deleteTree(tmp);
+    }
+
+    /** The folder holding Rollerbot.exe for the active language (searched up to 4 levels deep, case-insensitive), or null. */
+    static File findGameRoot(Context c) { return find(langDir(c, activeLang(c)), 0); }
 
     private static File find(File dir, int depth) {
         File[] list = dir.listFiles();
@@ -68,7 +99,7 @@ final class GameImporter {
             return "That is the .cue sheet: pick the .bin file next to it (roller.bin) instead.";
         try (ParcelFileDescriptor pfd = cr.openFileDescriptor(uri, "r")) {
             if (pfd == null) return "Couldn't open that file.";
-            if (isZip(cr, uri)) return importZip(c, uri);
+            if (isZip(cr, uri)) return importZip(c, uri, lang);
             if (!nativeOk) return "The disc importer isn't available in this build.";
             if (!isImage(pfd.getFd())) return "That file isn't a zip or a CD image (.iso / .bin).";
             return fromImage(c, pfd.getFd(), lang, p);
@@ -94,21 +125,37 @@ final class GameImporter {
     }
 
     private static String extractFrom(Context c, File cabDir, int lang, Progress p) {
-        File dest = gameDir(c);
-        deleteTree(dest);
-        String err = extract(cabDir.getPath(), dest.getPath(), PortPrefs.LANG_DIRS[lang], p);
-        if (err != null) { deleteTree(dest); return err; }
-        return findGameRoot(c) == null ? "Imported, but Rollerbot.exe was not found." : null;
+        deleteTree(gameDir(c));
+        // Every language set the disc has, side by side (the cabinet's CodeAndData(<language>) groups); a missing group is skipped.
+        String lastErr = null;
+        for (int i = 0; i < PortPrefs.LANG_DIRS.length; i++) {
+            File dest = langDir(c, i);
+            String err = extract(cabDir.getPath(), dest.getPath(), PortPrefs.LANG_DIRS[i], p);
+            if (err != null) { deleteTree(dest); lastErr = err; }
+        }
+        return afterInstall(c, lang, lastErr);
     }
 
-    static String importZip(Context c, Uri zip) {
+    /** null when the chosen language is installed; else a message naming the languages the source did have. */
+    private static String afterInstall(Context c, int lang, String lastErr) {
+        boolean[] have = installed(c);
+        boolean any = false;
+        for (boolean b : have) any |= b;
+        if (!any) return lastErr != null ? lastErr : "Imported, but Rollerbot.exe was not found.";
+        return have[lang] ? null : LangSets.missingMessage(PortPrefs.LANG_LABELS, lang, have);
+    }
+
+    static String importZip(Context c, Uri zip, int lang) {
         File dest = gameDir(c);
+        deleteTree(dest);
+        File plain = new File(dest, ".plain");          // entries under no CodeAndData(<language>) folder
         try (InputStream in = c.getContentResolver().openInputStream(zip); ZipInputStream z = new ZipInputStream(in)) {
             String root = dest.getCanonicalPath() + File.separator;
             ZipEntry e;
             byte[] buf = new byte[1 << 16];
             while ((e = z.getNextEntry()) != null) {
-                File out = new File(dest, e.getName());
+                String lg = LangSets.langOf(e.getName());
+                File out = lg != null ? new File(new File(dest, lg), LangSets.relAfter(e.getName())) : new File(plain, e.getName());
                 if (!out.getCanonicalPath().startsWith(root)) continue;   // zip-slip guard
                 if (e.isDirectory()) { out.mkdirs(); continue; }
                 out.getParentFile().mkdirs();
@@ -120,7 +167,17 @@ final class GameImporter {
         } catch (IOException | RuntimeException ex) {
             return "Import failed: " + ex.getMessage();
         }
-        return findGameRoot(c) == null ? "Imported, but Rollerbot.exe was not found in it." : null;
+        // Language folders in the zip win; a plain game folder (no CodeAndData(...)) is the chosen language's set.
+        boolean[] have = installed(c);
+        boolean any = false;
+        for (boolean b : have) any |= b;
+        if (any) deleteTree(plain);
+        else if (find(plain, 0) != null) {
+            File target = langDir(c, lang);
+            target.getParentFile().mkdirs();
+            if (!plain.renameTo(target)) return "Import failed: couldn't place the game files.";
+        }
+        return afterInstall(c, lang, "Imported, but Rollerbot.exe was not found in it.");
     }
 
     // ---- folder: the disc, the Setup folder, a folder with an image, or the extracted game -----------------------
@@ -144,10 +201,14 @@ final class GameImporter {
                 if (n.equals("data1.hdr")) hasHdr = true;
                 if (image == null && (n.endsWith(".iso") || n.endsWith(".bin") || n.endsWith(".img"))) image = d;
             }
-            if (hasExe) {                                     // an already-extracted game: copy it as it is
+            if (hasExe) {                                     // an already-extracted game (or the disc's file tree)
+                boolean sets = false;
+                for (Doc d : all) if (d.dir && LangSets.langOfDirName(d.name) != null) sets = true;
                 deleteTree(gameDir(c));
-                copyDir(cr, tree, DocumentsContract.getTreeDocumentId(tree), gameDir(c));
-                return findGameRoot(c) == null ? "Imported, but Rollerbot.exe was not found." : null;
+                String rootId = DocumentsContract.getTreeDocumentId(tree);
+                if (sets) copyDir(cr, tree, rootId, gameDir(c), gameDir(c), true, null);     // each CodeAndData(<language>) to game/<language>/
+                else copyDir(cr, tree, rootId, langDir(c, lang), gameDir(c), false, null);  // a plain game folder: the chosen language's set
+                return afterInstall(c, lang, "Imported, but Rollerbot.exe was not found.");
             }
             if (hasHdr) {                                     // the disc / Setup folder: take the cabinet files
                 if (!nativeOk) return "The disc importer isn't available in this build.";
@@ -196,8 +257,12 @@ final class GameImporter {
         }
     }
 
-    private static void copyDir(ContentResolver cr, Uri tree, String docId, File dest) throws IOException {
-        dest.mkdirs();
+    /**
+     * Copies a folder. With sets = true only what is under a CodeAndData(<language>) folder is copied, to game/<language>/;
+     * lang is the set being copied (null above the language folders). Otherwise everything goes to dest.
+     */
+    private static void copyDir(ContentResolver cr, Uri tree, String docId, File dest, File base, boolean sets, String lang) throws IOException {
+        if (!sets || lang != null) dest.mkdirs();
         Uri kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId);
         String[] cols = { DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
                           DocumentsContract.Document.COLUMN_MIME_TYPE };
@@ -206,7 +271,11 @@ final class GameImporter {
             while (cur.moveToNext()) {
                 String id = cur.getString(0), name = cur.getString(1).replace('/', '_');
                 File out = new File(dest, name);
-                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(cur.getString(2))) copyDir(cr, tree, id, out);
+                if (DocumentsContract.Document.MIME_TYPE_DIR.equals(cur.getString(2))) {
+                    String l = sets && lang == null ? LangSets.langOfDirName(name) : null;
+                    if (l != null) copyDir(cr, tree, id, new File(base, l), base, true, l);
+                    else copyDir(cr, tree, id, out, base, sets, lang);
+                } else if (sets && lang == null) continue;
                 else copyOne(cr, DocumentsContract.buildDocumentUriUsingTree(tree, id), out);
             }
         }

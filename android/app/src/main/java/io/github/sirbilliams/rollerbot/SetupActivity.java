@@ -100,15 +100,17 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
             pr.add(new LauncherView.Row("Import your game first", "", false, false));
         }
         view.setRows(0, pr.toArray(new LauncherView.Row[0]));
-        view.setLines(0, have ? "Play" : "Welcome", have ? new String[0] : new String[] { "No game imported yet. Choose Import and bring your own disc." });
+        boolean[] inst = GameImporter.installed(this);
+        int active = GameImporter.activeLang(this);
+        view.setLines(0, have ? "Play" : "Welcome", have ? new String[] { "Language: " + PortPrefs.LANG_LABELS[active] + " (change in Settings)" } : new String[] { "No game imported yet. Choose Import and bring your own disc." });
 
         view.setLines(1, "Import your game",
                 have ? "Game found. Importing again replaces it." : "Pick the folder of your disc, or an image (.iso, .bin) or a .zip.",
-                "Language to install: " + PortPrefs.LANG_LABELS[PortPrefs.lang(this)]);
+                "Every language on the disc is installed; the one chosen below opens first.");
         view.setRows(1, new LauncherView.Row[] {
             new LauncherView.Row("Import from disc folder", "", !importing, false),
             new LauncherView.Row("Import from image or .zip", "", !importing, false),
-            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[PortPrefs.lang(this)], !importing, true),
+            new LauncherView.Row("Preferred language", PortPrefs.LANG_LABELS[PortPrefs.lang(this)], !importing, true),
             new LauncherView.Row(confirmRemove ? "Press again to remove" : "Remove imported game", "", have && !importing, false) });
 
         view.setLines(2, "Settings", "Move: D-pad or left stick     Jump: " + PortPrefs.CONTROLS[PortPrefs.controls(this)],
@@ -117,13 +119,15 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
             new LauncherView.Row("Widescreen", WS_NAMES[PortPrefs.widescreen(this)], true, true),
             new LauncherView.Row("Controls", PortPrefs.CONTROLS[PortPrefs.controls(this)], true, true),
             new LauncherView.Row("Bottom screen", PortPrefs.companion(this) ? "On" : "Off", true, true),
-            new LauncherView.Row("Volume", PortPrefs.volume(this) + "%", true, true) });
+            new LauncherView.Row("Volume", PortPrefs.volume(this) + "%", true, true),
+            new LauncherView.Row("Game language", PortPrefs.LANG_LABELS[active], have && countOf(inst) > 1, true) });
 
         view.setLines(3, "About", "Rollerbot: A Time Journey, rebuilt for handhelds and desktop.",
                 "Bring your own disc: no game files are included.", "Not affiliated with or endorsed by the rights holders.", "Version " + version());
         view.setRows(3, new LauncherView.Row[0]);
     }
 
+    private static int countOf(boolean[] b) { int n = 0; for (boolean x : b) if (x) n++; return n; }
     private static int indexOf(int[] a, int v) { for (int i = 0; i < a.length; i++) if (a[i] == v) return i; return 0; }
     private String version() {
         try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "0.55"; }
@@ -157,6 +161,14 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         else if (page == 2 && row == 1) PortPrefs.setControls(this, PortPrefs.controls(this) + dir);
         else if (page == 2 && row == 2) PortPrefs.setCompanion(this, !PortPrefs.companion(this));
         else if (page == 2 && row == 3) PortPrefs.setVolume(this, PortPrefs.volume(this) + 10 * dir);
+        else if (page == 2 && row == 4) {      // Game language: only the installed sets, no re-import
+            boolean[] inst = GameImporter.installed(this);
+            int n = PortPrefs.LANG_DIRS.length, cur = GameImporter.activeLang(this);
+            for (int k = 1; k <= n; k++) {
+                int i = Math.floorMod(cur + dir * k, n);
+                if (inst[i]) { PortPrefs.setLang(this, i); break; }
+            }
+        }
         refresh();
     }
 
