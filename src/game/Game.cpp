@@ -2,6 +2,8 @@
 #include "assets/Assets.h"
 #include "audio/Audio.h"
 #include "game/BrainHost.h"
+#include "game/MenuRaster.h"
+#include "game/Save.h"
 #include "platform/Bridge.h"
 #include "scene/Scene.h"
 #include <SDL.h>
@@ -45,6 +47,16 @@ class Overlay2D {
     GLint ok = 0; glGetProgramiv(prog_, GL_LINK_STATUS, &ok);
     return ok != 0;
   }
+  // straight-alpha RGBA, top-down (the pause menu canvas)
+  GLuint uploadRGBA(int w, int h, const uint8_t* rgba) {
+    GLuint t = 0; glGenTextures(1, &t); glBindTexture(GL_TEXTURE_2D, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return t;
+  }
+  void release(GLuint t) { if (t) glDeleteTextures(1, &t); }
   // rgba pixels, top-down; black (0,0,0) becomes transparent when key is set (D3DRM decal transparency).
   GLuint upload(int w, int h, const uint8_t* rgb, bool key) {
     std::vector<uint8_t> px(size_t(w) * h * 4);
@@ -127,6 +139,10 @@ class RollerGame : public Game, public HostSink, public HostInput {
     audioOk_ = audio_.init(48000, true);
     if (!audioOk_) { audio_.init(48000, false); }
     hudOk_ = hud_.init();
+    save_.reset(new GameSave(saveDirectory(plat_->prefDir())));
+    SDL_Log("saves in %s (hi-score %d, reached level %d)", save_->dir().c_str(), save_->highScore(), save_->reached);
+    if (save_->widescreen >= 0 && save_->widescreen <= 3 && !envs("RB_WIDESCREEN")) Bridge::requestWidescreen(save_->widescreen);
+    if (envs("RB_CONTINUE") && save_->lastLevel > 1) { char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", save_->lastLevel); level_ = nm; }
     if (const char* v = envs("RB_LEVEL")) level_ = v;
     if (const char* v = envs("RB_FIELD")) { field_ = std::strtof(v, nullptr); fieldFixed_ = true; }
     if (const char* v = envs("RB_NOHUD")) hudOn_ = false, (void)v;
@@ -155,11 +171,17 @@ class RollerGame : public Game, public HostSink, public HostInput {
       char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", n);
       if (store_.find(std::string(nm) + ".prj")) loadLevel(nm);
     }
+    if (Bridge::takeRestart() && host_) loadLevel(level_);
     publishStatus();
     if (!host_) return;
     const Input& in = plat_->input();
+    const bool title = level_ == "level001";   // the exe's Esc on the title screen leaves the game; elsewhere it opens the menu
+    if (const char* v = envs("RB_MENU")) if (frame_ == std::atol(v)) openMenu();   // test hook: open the pause menu at that frame
+    if (menuOpen_) { updateMenu(in); return; }
+    if (in.pressed(Action::Pause) || in.pressed(Action::Menu) || (in.pressed(Action::Back) && !title && !envs("RB_NOQUIT"))) { openMenu(); return; }
     if (in.pressed(Action::Back) && !envs("RB_NOQUIT")) plat_->requestQuit();
     host_->advance(dt);
+    trackProgress();
     int ec = host_->exitCode();
     if (ec != -1 && !pendingExit_) {
       pendingExit_ = true;
@@ -185,11 +207,17 @@ class RollerGame : public Game, public HostSink, public HostInput {
     scene_.setFog(cfg_.flags & 0x10, bg_, cfg_.fogStart, cfg_.fogEnd);
     scene_.render();
     if (hudOn_ && hudOk_) drawHud(vp);
+    if (menuOpen_ && hudOk_) drawMenu(vp);
     auto it = shots_.find(frame_);
     if (it != shots_.end()) plat_->screenshot(it->second);
   }
 
-  void shutdown() override { if (!statsDone_) logStats(); Bridge::publish(Status{}); audio_.shutdown(); }
+  void shutdown() override {
+    if (!statsDone_) logStats();
+    flushSave(true);
+    Bridge::publish(Status{});
+    audio_.shutdown();
+  }
 
   void logStats() {
     statsDone_ = true;
@@ -207,8 +235,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
     }
   }
   // App/lid suspend or user pause (platform calls these): silence and freeze audio too.
-  void pause() override { paused_ = true; if (audioOk_) audio_.pauseAll(); }
-  void resume() override { paused_ = false; if (audioOk_) audio_.resumeAll(); }
+  void pause() override { paused_ = true; flushSave(true); if (audioOk_) audio_.pauseAll(); }
+  void resume() override { paused_ = false; if (audioOk_ && !menuOpen_) audio_.resumeAll(); }
 
   // ---- HostSink
   void lightColor(int, int, int, int) override {}   // ambient is kept fully lit (see docs/game.md)
@@ -263,6 +291,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
     st.levels = levels_;
     if (host_) { st.lives = host_->globalValue(220); st.fruit = host_->globalValue(201); st.points = host_->globalValue(203); }
     st.paused = paused_;
+    if (save_) { st.highScore = save_->highScore(); st.reached = save_->reached; }
+    st.menuOpen = menuOpen_;
     st.widescreen = int(plat_->config().widescreen);
     Bridge::publish(st);
   }
@@ -339,12 +369,110 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (!host_->load(dir_, level, this, this, &err)) { SDL_Log("load %s: %s", level.c_str(), err.c_str()); host_.reset(); return false; }
     if (!g.empty()) host_->setGlobals(g);
     level_ = level; pendingExit_ = false;
+    {   // the high score lives in global 100 (as the exe keeps it) and survives sessions
+      std::vector<int> g2 = host_->globals();
+      if (g2.size() > 100 && save_ && g2[100] < save_->highScore()) { g2[100] = save_->highScore(); host_->setGlobals(g2); }
+      int n = level.size() > 5 ? std::atoi(level.c_str() + 5) : 0;
+      if (save_ && n > 0) {
+        if (n > save_->reached) save_->reached = n;
+        if (n > 1) save_->lastLevel = n;
+        save_->touch(); flushSave(true);
+      }
+    }
     readConfig(level);
     buildSky();
     if (!envs("RB_FIELD")) fieldFixed_ = false;
     slots_.resize(host_->count());
     SDL_Log("loaded %s: %d elements, fog %s %.0f..%.0f", level.c_str(), host_->count(), (cfg_.flags & 0x10) ? "on" : "off", cfg_.fogStart, cfg_.fogEnd);
     return true;
+  }
+
+  // ---- persistence
+  void trackProgress() {
+    if (!save_ || !host_) return;
+    int h = host_->globalValue(100);
+    if (h > 0) save_->submitScore(h);
+    if (level_ != "level001") { int p = host_->globalValue(203); if (p != save_->lastScore) { save_->lastScore = p; save_->touch(); } }
+    flushSave(false);
+  }
+  void flushSave(bool force) {
+    if (!save_ || !save_->dirty()) return;
+    if (!force && ++sinceSave_ < 300) return;   // about every 5 s while something changed
+    sinceSave_ = 0;
+    save_->save();
+  }
+
+  // ---- pause menu (desktop Esc / Start; the companion mirrors it through rb::Bridge)
+  static const char* wsName(int m) { static const char* n[] = {"Fill", "Side panels", "Stretch", "Original 4:3"}; return n[m & 3]; }
+  std::vector<int> unlocked() const {
+    std::vector<int> v;
+    for (int n : levels_) if (n <= (save_ ? save_->reached : 1)) v.push_back(n);
+    return v;
+  }
+  void openMenu() {
+    menuOpen_ = true; menuSel_ = 0; menuDirty_ = true;
+    menuLevel_ = level_.size() > 5 ? std::atoi(level_.c_str() + 5) : 1;
+    flushSave(true);
+    if (audioOk_) audio_.pauseAll();
+  }
+  void closeMenu() { menuOpen_ = false; if (audioOk_ && !paused_) audio_.resumeAll(); }
+  void updateMenu(const Input& in) {
+    const int kItems = 5;
+    auto lv = unlocked();
+    if (in.pressed(Action::Up)) { menuSel_ = (menuSel_ + kItems - 1) % kItems; menuDirty_ = true; }
+    if (in.pressed(Action::Down)) { menuSel_ = (menuSel_ + 1) % kItems; menuDirty_ = true; }
+    int dx = (in.pressed(Action::Right) ? 1 : 0) - (in.pressed(Action::Left) ? 1 : 0);
+    if (dx && menuSel_ == 2 && !lv.empty()) {
+      size_t i = std::find(lv.begin(), lv.end(), menuLevel_) - lv.begin();
+      i = (i + lv.size() + dx) % lv.size();
+      menuLevel_ = lv[i]; menuDirty_ = true;
+    }
+    bool ok = in.pressed(Action::Accept) || in.pressed(Action::Jump);
+    if (dx && menuSel_ == 3) cycleWidescreen(dx);
+    if (ok) {
+      switch (menuSel_) {
+        case 0: closeMenu(); break;
+        case 1: closeMenu(); loadLevel(level_); break;
+        case 2: { char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", menuLevel_);
+                  if (store_.find(std::string(nm) + ".prj")) { closeMenu(); loadLevel(nm); } break; }
+        case 3: cycleWidescreen(1); break;
+        case 4: flushSave(true); plat_->requestQuit(); break;
+      }
+    } else if (in.pressed(Action::Back) || in.pressed(Action::Pause) || in.pressed(Action::Menu)) closeMenu();
+  }
+  void cycleWidescreen(int d) {
+    int m = (int(plat_->config().widescreen) + 4 + d) % 4;
+    Bridge::requestWidescreen(m);
+    wsShown_ = m;
+    if (save_) { save_->widescreen = m; save_->touch(); }
+    menuDirty_ = true;
+  }
+  void drawMenu(const Viewport& vp) {
+    if (menuDirty_ || !menuTex_) {
+      MenuModel m;
+      m.title = "Paused";
+      m.items = {"Resume", "Restart level", menuLevel_ == 1 ? "Level: title screen" : "Level: " + std::to_string(menuLevel_),
+                 std::string("Screen: ") + wsName(wsShown_ >= 0 ? wsShown_ : int(plat_->config().widescreen)), "Quit game"};
+      m.selected = menuSel_;
+      m.status = "Hi-score " + std::to_string(save_ ? save_->highScore() : 0);
+      m.footer = "Arrows choose   Enter select   Esc back";
+      std::vector<uint8_t> px;
+      try {
+        if (rasterizeMenu(store_.read("font.fnt"), m, px)) {
+          hud_.release(menuTex_);
+          menuTex_ = hud_.uploadRGBA(640, 480, px.data());
+        }
+      } catch (const std::exception&) {}
+      menuDirty_ = false;
+    }
+    if (!menuTex_) return;
+    hud_.begin(vp);
+    if (!dimTex_) { const uint8_t d[4] = {5, 10, 28, 170}; dimTex_ = hud_.uploadRGBA(1, 1, d); }
+    glScissor(0, 0, vp.winW, vp.winH);
+    hud_.draw(dimTex_, 1, 1, 0, 0, 1, 1, -4000, -4000, 9000, 9000);
+    glScissor(0, 0, vp.winW, vp.winH);
+    hud_.draw(menuTex_, 640, 480, 0, 0, 640, 480, 0, 0, 640, 480);
+    hud_.end();
   }
 
   // ---- model building
@@ -610,6 +738,11 @@ class RollerGame : public Game, public HostSink, public HostInput {
   long frame_ = 0;
   bool pendingExit_ = false, paused_ = false;
   std::vector<int> levels_;
+  std::unique_ptr<GameSave> save_;
+  int sinceSave_ = 0;
+  bool menuOpen_ = false, menuDirty_ = false;
+  int menuSel_ = 0, menuLevel_ = 1, wsShown_ = -1;
+  GLuint menuTex_ = 0, dimTex_ = 0;
 };
 
 }  // namespace

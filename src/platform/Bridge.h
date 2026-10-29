@@ -14,6 +14,9 @@ struct Status {
   int lives = 0, fruit = 0, points = 0;   // brain globals 220, 201, 203 (see docs/brain.md)
   bool paused = false;           // by the user (companion) or by app suspend
   int widescreen = 0;            // rb::Widescreen
+  int highScore = 0;             // global 100, persisted
+  int reached = 1;               // highest unlocked level number
+  bool menuOpen = false;         // the in-game pause menu is showing
 };
 
 class Bridge {
@@ -27,7 +30,9 @@ class Bridge {
   static bool pauseRequested();
   static void requestWidescreen(int m);  // -1 = none
   static int takeWidescreen();
-  // "level|lives|fruit|points|paused|widescreen|1,2,3" for the JNI side
+  static void requestRestart();          // restart the current level
+  static bool takeRestart();
+  // "level|lives|fruit|points|paused|widescreen|1,2,3|highScore|reached|menu" for the JNI side
   static std::string statusLine();
 };
 
