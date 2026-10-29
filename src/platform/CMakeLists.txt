@@ -21,6 +21,9 @@ if(RB_TESTS AND NOT RB_ANDROID)
   add_executable(rb_platform_test ${CMAKE_SOURCE_DIR}/tests/platform/platform_test.cpp)
   target_link_libraries(rb_platform_test PRIVATE rb_platform)
   add_test(NAME platform COMMAND rb_platform_test)
+  # Compile the Android JNI glue against a stand-in jni.h so broken edits fail here, not only in the APK job.
+  add_library(rb_jni_check OBJECT BridgeJNI.cpp)
+  target_include_directories(rb_jni_check PRIVATE ${CMAKE_SOURCE_DIR}/tests/platform/jni_stub ${CMAKE_SOURCE_DIR}/src)
 endif()
 
 # Disc importer: InstallShield cabinet reader (unshield, MIT; fetch-deps.sh) + ISO/BIN reader.
