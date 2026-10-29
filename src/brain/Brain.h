@@ -17,7 +17,7 @@ namespace rb {
 constexpr std::int32_t kMt = 512000;   // "1mt": thousandths << 9
 constexpr std::int32_t kDg = 512;      // "1dg": 184320 units per turn (0x2d000)
 constexpr std::int32_t kTurn = 184320; // 360 degrees
-constexpr std::int32_t kTicksPerSecond = 30; // guess from the "ms"/"rm" converters
+constexpr std::int32_t kTicksPerSecond = 30; // QPC / (frequency/4500), deadline +=150: 0x45b6c0 / 0x442220
 constexpr int kMaxGlobals = 2048;      // global(n) masks n with 0x7ff (0x40a010)
 constexpr std::int32_t kElementRefBase = 0x10000000; // synthetic "pointer" base; ref = base + index*0x400
 constexpr std::uint32_t kElementStride = 0x400;      // sizeof(element) in the exe
@@ -51,6 +51,7 @@ struct Element {
     std::uint32_t runCount = 0;      // +0xac
     std::int32_t soundRate = 0;
     std::vector<std::int32_t> vars;  // brain variable memory
+    std::int32_t boxRadius = 0;
     int brain = -1;                  // index into BrainVM programs, -1 = none
 };
 
@@ -63,6 +64,7 @@ public:
     int groundElement = -1;          // ground_set()
     int listener = -1;
     std::uint32_t randomPtr = 0;
+    std::uint32_t updateCount = 0; // message/frame updates, 0x57f000
 };
 
 // ---- services the VM talks to; all have headless defaults (see MockScene etc.) ----
@@ -72,7 +74,7 @@ struct IScene {
     virtual void lightIntensity(int, int) {}
     virtual void backgroundColor(int, int, int) {}
     virtual void elementEvent(int /*index*/, const char* /*what*/) {} // on/off/show/hide/translucent
-    // Height queries; return 0 when no ground is below (water/void), >0 otherwise (raw units above ground).
+    // Ground surface height in raw units; zero when no surface is found.
     virtual std::int32_t groundLevel(const World&, int /*element*/) { return 1; }
     // Collision radius (1/1000 mt, before scale) for a model; 0 = unknown.
     virtual std::int32_t modelRadius(const std::string& /*model*/) { return 0; }
@@ -106,6 +108,8 @@ inline ElementTransform elementTransform(const Element& e) {
 
 struct TickEvent { std::uint32_t tick; int element; std::string text; };
 
+struct LevelSelection { std::string project, loadingScreen, background; };
+
 class Brain; // compiled program (opaque)
 
 class BrainVM {
@@ -115,6 +119,10 @@ public:
     // The only place that knows where project text comes from. Takes the parsed project.
     void load(const ProjectData& project, const std::filesystem::path& gameDir);
     void setServices(IScene* s, IAudio* a, IInput* i);
+    // Resolve positive exit codes to levelNNN.prj; negative codes end the session.
+    static std::string projectForExit(int code);
+    static LevelSelection selectLevel(const std::filesystem::path& gameDir, int code);
+    bool transition(const std::filesystem::path& gameDir);
     // Inject an event (e.g. level-transition request or a global set from the UI lane).
     void setGlobal(int index, std::int32_t v) { world_.globals[index & 0x7ff] = v; }
     // One 1/30 s simulation step: animation, collisions, input, then every element's brain in index order.
@@ -133,6 +141,9 @@ public:
 private:
     friend class Brain;
     struct Impl;
+    std::unique_ptr<Impl> impl_;
+    bool loaded_ = false;
+    std::int32_t groundHeight(int index);
     World world_;
     IScene* scene_; IAudio* audio_; IInput* input_;
     std::vector<std::shared_ptr<Brain>> programs_;

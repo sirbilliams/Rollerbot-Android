@@ -10,61 +10,28 @@
 using namespace rb;
 static double normalizedDeg(std::int32_t a) { return double(((a % kTurn) + kTurn) % kTurn) / kDg; }
 
-// Scene backed by the real meshes: collision radii from model bounds, ground by XZ footprint of the ground mesh.
-struct MeshScene : IScene {
-    AssetStore* store = nullptr;
-    std::map<std::string, Mesh> meshes;
-    std::map<std::string, std::int32_t> radii;
-    const Mesh* mesh(const std::string& m) {
-        auto it = meshes.find(m);
-        if (it != meshes.end()) return it->second.parts.empty() ? nullptr : &it->second;
-        Mesh me;
-        try { std::string n = m.rfind("./", 0) == 0 ? m.substr(2) : m; me = Mesh::decode(store->read(n)); } catch (const std::exception&) {}
-        return &(meshes[m] = std::move(me));
-    }
-    std::int32_t modelRadius(const std::string& m) override {
-        auto it = radii.find(m);
-        if (it != radii.end()) return it->second;
-        double r = 0;
-        if (auto* me = mesh(m)) for (auto& p : me->parts) for (auto& v : p.vertices) r = std::max(r, std::sqrt(double(v[0]) * v[0] + double(v[1]) * v[1] + double(v[2]) * v[2]));
-        return radii[m] = std::int32_t(r * 1000);
-    }
-    std::int32_t groundLevel(const World& w, int e) override {
-        if (w.groundElement < 0) return 1;
-        const Element& g = w.elements[w.groundElement];
-        const Element& o = w.elements[e];
-        auto* me = mesh(g.model);
-        if (!me) return 1;
-        double px = double(o.pos.x - g.pos.x) / kMt, pz = double(o.pos.z - g.pos.z) / kMt;
-        for (auto& p : me->parts)
-            for (auto& f : p.faces) {
-                for (size_t k = 2; k < f.size(); ++k) {
-                    auto &a = p.vertices[f[0]], &b = p.vertices[f[k - 1]], &c = p.vertices[f[k]];
-                    auto s = [&](const std::array<float, 3>& u, const std::array<float, 3>& v) { return (px - u[0]) * (v[2] - u[2]) - (pz - u[2]) * (v[0] - u[0]); };
-                    double d1 = s(a, b), d2 = s(b, c), d3 = s(c, a);
-                    bool neg = d1 < 0 || d2 < 0 || d3 < 0, pos = d1 > 0 || d2 > 0 || d3 > 0;
-                    if (!(neg && pos)) return 1;
-                }
-            }
-        return 0;
-    }
-};
-
 int main(int argc, char** argv) {
     if (argc < 3) { std::fprintf(stderr, "usage: rbbrain <gamedir> <project> [--ticks N] [--trace] [--keys a,b] [--summary]\n"); return 2; }
     std::string game = argv[1], proj = argv[2];
     int ticks = 100; bool trace = false, summary = false; std::set<int> keys;
+    std::map<int,std::set<int>> schedule;
     for (int i = 3; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--ticks") && i + 1 < argc) ticks = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--trace")) trace = true;
         else if (!std::strcmp(argv[i], "--summary")) summary = true;
-        else if (!std::strcmp(argv[i], "--keys") && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t; while (std::getline(ss, t, ',')) keys.insert(std::atoi(t.c_str())); }
+        else if (!std::strcmp(argv[i], "--keys") && i + 1 < argc) { std::stringstream ss(argv[++i]); std::string t;
+            while (std::getline(ss,t,';')) {
+                auto c=t.find(':'); int tick=c==std::string::npos ? 0 : std::atoi(t.c_str());
+                std::stringstream ks(c==std::string::npos ? t : t.substr(c+1)); std::string key;
+                while(std::getline(ks,key,',')) if(!key.empty()) schedule[tick].insert(std::atoi(key.c_str()));
+                if(!schedule.count(tick)) schedule[tick]={};
+            } }
     }
     try {
         AssetStore store; store.open(game);
         if (proj.find('.') == std::string::npos) proj += ".prj";
         ProjectData pd = ProjectData::load(store, proj);
-        MeshScene scene; scene.store = &store;
+        MockScene scene;
         MockAudio audio; MockInput input; input.keys = keys; input.any = !keys.empty();
         BrainVM vm; vm.setServices(&scene, &audio, &input);
         vm.load(pd, game);
@@ -77,6 +44,7 @@ int main(int argc, char** argv) {
         std::array<std::int32_t, kMaxGlobals> pg = vm.world().globals;
         std::size_t evShown = 0;
         for (int t = 0; t < ticks && !vm.finished(); ++t) {
+            auto ki=schedule.find(t); if(ki!=schedule.end()) { input.keys=ki->second; input.any=!input.keys.empty(); }
             vm.tick();
             if (trace) {
                 std::printf("tick %d\n", t + 1);
@@ -93,6 +61,8 @@ int main(int argc, char** argv) {
             }
         }
         const auto& w = vm.world();
+        for (const auto& e : w.elements) if(e.id&8) std::printf("player %u pos %.3f %.3f %.3f yaw %.3f radius %d collided %u\n",e.index,e.pos.x/double(kMt),e.pos.y/double(kMt),e.pos.z/double(kMt),normalizedDeg(e.rot.y),e.radius,e.collided);
+        std::printf("state score %d lives %d fruit %d next %s\n",w.globals[0],w.globals[220],w.globals[201],BrainVM::projectForExit(w.exitCode).c_str());
         int moved = 0, on = 0;
         for (size_t i = 0; i < w.elements.size(); ++i) { moved += (w.elements[i].pos.x || w.elements[i].pos.y || w.elements[i].pos.z); on += (w.elements[i].flags & 1); }
         if (summary || !trace) {

@@ -6,6 +6,9 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <sstream>
+#include <iomanip>
+#include <limits>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -19,6 +22,18 @@ std::int32_t normAngle(std::int32_t a) {
     if (a < 0) { std::int32_t m = a % 0x2cfff; return m + 0x2cfff; }
     if (a > 0x2cfff) return a % 0x2cfff;
     return a;
+}
+
+// 0x45ea10: normalize to an 8-bit index into round(16*sqrt(i)), then restore the exponent.
+// Generate the mathematical table value instead of embedding executable bytes.
+std::int32_t coarseSqrt(std::uint64_t square) {
+    if (square > 0xffffffffu) return 0x7fffffff;
+    if (!square) return 0;
+    int exponent=0;
+    while (square>255) { square >>= 2; ++exponent; }
+    while (square<64) { square <<= 2; --exponent; }
+    auto mantissa=std::uint32_t(std::lround(16*std::sqrt(double(square))));
+    return exponent>=4 ? std::int32_t(mantissa << (exponent-4)) : std::int32_t(mantissa >> (4-exponent));
 }
 
 std::string lower(std::string s) { for (auto& c : s) c = char(std::tolower((unsigned char)c)); return s; }
@@ -111,44 +126,24 @@ struct Parser {
     bool isOp(const char* s) const { return cur().t == T::Op && cur().s == s; }
     bool isId(const char* s) const { return cur().t == T::Id && lower(cur().s) == s; }
 
-    ExprP parseOr() {
-        auto l = parseAnd();
-        while (!err.size() && (isId("or") || isId("xor"))) {
-            std::string op = lower(cur().s); ++p;
-            auto r = parseAnd();
-            l = bin(op, std::move(l), std::move(r));
+    ExprP parseOr() { return parsePriority(0); }
+    ExprP parsePriority(int level) {
+        // 0x414a.. / 0x415590: / then * then - then +, followed by comparisons and bit operators.
+        static const std::vector<std::vector<std::string>> groups = {
+            {"xor"}, {"or"}, {"and"}, {">", ">=", "=>"}, {"<", "<=", "=<"},
+            {"<>", "!="}, {"="}, {"+"}, {"-"}, {"*"}, {"/"}
+        };
+        if (level == int(groups.size())) return parseUnary();
+        auto l=parsePriority(level+1);
+        while (err.empty()) {
+            std::string op=lower(cur().s);
+            const auto& g=groups[level];
+            if (std::find(g.begin(),g.end(),op)==g.end()) break;
+            ++p; auto r=parsePriority(level+1); l=bin(op,std::move(l),std::move(r));
         }
-        return l;
-    }
-    ExprP parseAnd() {
-        auto l = parseCmp();
-        while (!err.size() && isId("and")) { ++p; auto r = parseCmp(); l = bin("and", std::move(l), std::move(r)); }
-        return l;
-    }
-    ExprP parseCmp() {
-        auto l = parseSum();
-        if (cur().t == T::Op) {
-            std::string o = cur().s;
-            if (o == "=" || o == "<" || o == ">" || o == "=<" || o == "<=" || o == "=>" || o == ">=" || o == "<>" || o == "!=") {
-                ++p; auto r = parseSum(); return bin(o, std::move(l), std::move(r));
-            }
-        }
-        // "collision(element,2)0": a value directly after an operand with no operator behaves as <> (guess)
-        if (cur().t == T::Num) { auto r = parseSum(); return bin("<>", std::move(l), std::move(r)); }
-        return l;
-    }
-    ExprP parseSum() {
-        auto l = parseTerm();
-        while (cur().t == T::Op && (cur().s == "+" || cur().s == "-")) {
-            std::string o = cur().s; ++p; auto r = parseTerm(); l = bin(o, std::move(l), std::move(r));
-        }
-        return l;
-    }
-    ExprP parseTerm() {
-        auto l = parseUnary();
-        while (cur().t == T::Op && (cur().s == "*" || cur().s == "/")) {
-            std::string o = cur().s; ++p; auto r = parseUnary(); l = bin(o, std::move(l), std::move(r));
-        }
+        // 0x414e30 / 0x415ac0 replace the first call with @0: trailing 0 gives @00 (slot zero).
+        // Preserve that retail spelling; other suffixes can alias arbitrary compiler temporaries.
+        if (level==0 && cur().t==T::Num && cur().s=="0") ++p;
         return l;
     }
     ExprP parseUnary() {
@@ -335,7 +330,13 @@ std::shared_ptr<Brain> compileBrain(const std::vector<std::string>& lines, std::
 }
 
 // ---------------------------------------------------------------- VM
-BrainVM::BrainVM() : scene_(nullptr), audio_(nullptr), input_(nullptr) {}
+struct BrainVM::Impl {
+    std::vector<std::int32_t> atan;
+    std::map<std::string, Mesh> meshes;
+    std::map<std::string, std::int32_t> radii;
+    std::map<std::string, std::array<std::int32_t,6>> bounds;
+};
+BrainVM::BrainVM() : impl_(new Impl), scene_(nullptr), audio_(nullptr), input_(nullptr) {}
 BrainVM::~BrainVM() = default;
 
 void BrainVM::setServices(IScene* s, IAudio* a, IInput* i) { scene_ = s; audio_ = a; input_ = i; }
@@ -369,6 +370,13 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
     sinusBig_.resize(big.size() / 4);
     if (!big.empty()) std::memcpy(sinusBig_.data(), big.data(), sinusBig_.size() * 4);
     randomBytes_ = slurp(findCI(gameDir, "random.bin"));
+    auto atanBytes=slurp(findCI(gameDir,"atan.bin"));
+    impl_->atan.resize(atanBytes.size()/4);
+    if(!atanBytes.empty()) std::memcpy(impl_->atan.data(),atanBytes.data(),impl_->atan.size()*4);
+    const auto carriedGlobals = world_.globals;
+    const auto carriedRandom = world_.randomPtr;
+    const auto carriedUpdates = world_.updateCount;
+    impl_->meshes.clear(); impl_->radii.clear(); impl_->bounds.clear();
     // globals start from globvars.dat (restored at load by 0x442220); the file is wrapped
     world_ = World{};
     try {
@@ -376,6 +384,8 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
         auto gv = st.read("globvars.dat");
         for (size_t i = 0; i + 4 <= gv.size() && i / 4 < kMaxGlobals; i += 4) std::memcpy(&world_.globals[i / 4], &gv[i], 4);
     } catch (const std::exception&) {}
+    if (loaded_) { world_.globals = carriedGlobals; world_.randomPtr = carriedRandom; world_.updateCount = carriedUpdates; }
+    loaded_ = true;
     programs_.clear(); compileErrors_.clear(); events_.clear(); unknown_.clear(); collisionMap_.clear(); hitColors_.clear();
     std::map<std::uint32_t, const BrainRecord*> bm;
     for (auto& b : pd.brains) bm[b.objectIndex] = &b;
@@ -389,11 +399,52 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
         e.rot = {deg(10), deg(11), deg(12)}; // fields 10..12 are rotation in degrees (guess from value ranges)
         e.id = std::uint32_t(fieldNum(o, 30));
         std::uint32_t f32 = std::uint32_t(fieldNum(o, 32)), f33 = std::uint32_t(fieldNum(o, 33));
-        e.flags = (f32 & 1) | (f33 ? kFlagPaused : 0) | kFlagVisible | kFlagCollide; // guess: visible+collidable by default
+        e.flags = (f32 & 1) | (f33 ? kFlagPaused : 0) | kFlagVisible | kFlagCollide; // 0x442... loader enables visibility and collisions
         e.credits = 0;
         auto sc = [&](size_t f) { auto v = fieldNum(o, f); return v <= 1 ? 1000 : v; };
         e.scale[0] = sc(41); e.scale[1] = sc(42); e.scale[2] = sc(43);
-        e.radius = scene_->modelRadius(e.model);
+        // 0x44cd00: radius is mean half-extent, unless project field 31 supplies one.
+        if (!impl_->meshes.count(e.model)) {
+            Mesh mesh; std::int32_t radius = 0;
+            try {
+                AssetStore st; st.open(gameDir); auto bytes = st.read(e.model);
+                if (assetKind(bytes) == "descriptor") {
+                    std::stringstream ss(std::string(bytes.begin(), bytes.end()));
+                    std::vector<std::string> f; std::string v;
+                    while (std::getline(ss, v, '|')) f.push_back(v);
+
+                    if (f.size() > 1) bytes = st.read(f[1]);
+                }
+                mesh = Mesh::decode(bytes);
+                // d3m vertices are integer millimetres, unlike visual meshes (metres).
+                if (assetKind(bytes) == "d3m")
+                    for (auto& part : mesh.parts) for (auto& v : part.vertices) for (auto& c : v) c /= 1000;
+                if (!radius) {
+                    float lo[3] = {0,0,0}, hi[3] = {0,0,0};
+                    for (auto& part : mesh.parts) for (auto& v : part.vertices) for (int k=0;k<3;++k) {
+                        lo[k] = std::min(lo[k],v[k]); hi[k] = std::max(hi[k],v[k]);
+                    }
+                    radius = std::int32_t(((hi[0]-lo[0])+(hi[1]-lo[1])+(hi[2]-lo[2]))*1000/6);
+                }
+            } catch (const std::exception&) {}
+            std::array<std::int32_t,6> bounds{};
+            for (auto& part : mesh.parts) for (auto& v : part.vertices) for(int k=0;k<3;++k) {
+                auto mm=std::int32_t(v[k]*1000); bounds[k]=std::min(bounds[k],mm); bounds[k+3]=std::max(bounds[k+3],mm);
+            }
+            impl_->bounds[e.model]=bounds;
+            impl_->meshes[e.model] = std::move(mesh); impl_->radii[e.model] = radius;
+        }
+        e.radius = impl_->radii[e.model];
+        if (!e.radius) e.radius = scene_->modelRadius(e.model);
+        if (std::atof(o.fields[31].c_str()) != 0) e.radius = std::int32_t(std::abs(std::atof(o.fields[31].c_str()))*1000);
+        e.credits = fieldNum(o,28);
+        e.vel = {wrap(std::llround(std::atof(o.fields[16].c_str())*kMt)), wrap(std::llround(std::atof(o.fields[17].c_str())*kMt)), wrap(std::llround(std::atof(o.fields[18].c_str())*kMt))};
+        e.spin = {deg(22),deg(23),deg(24)};
+        auto bounds=impl_->bounds[e.model];
+        e.boxRadius=std::int32_t(std::sqrt(double(std::max(std::abs(bounds[0]),std::abs(bounds[3])))*std::max(std::abs(bounds[0]),std::abs(bounds[3])) + double(std::max(std::abs(bounds[2]),std::abs(bounds[5])))*std::max(std::abs(bounds[2]),std::abs(bounds[5]))));
+        if (!e.boxRadius) e.boxRadius=e.radius;
+        // 0x442... project loader selects the last d3m ground, including paused scenery.
+        if (e.type == 12) world_.groundElement = int(i);
         auto it = bm.find(std::uint32_t(i));
         if (it != bm.end()) {
             std::vector<std::string> errs;
@@ -401,11 +452,74 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
             for (auto& m : errs) compileErrors_.push_back("e" + std::to_string(i) + " " + o.name + " " + m);
             e.brain = int(programs_.size());
             e.vars = prog->init;
+            // Serialized editor user values override declaration defaults (0x4125f0).
+            if (o.fields.size() > 34) {
+                std::stringstream ss(o.fields[34]); std::string v; std::vector<int> values;
+                while (std::getline(ss,v,'/')) values.push_back(std::atoi(v.c_str()));
+                for (size_t j=0;j<e.vars.size() && 3*j+3<values.size();++j)
+                    if (values[3*j+1] != 7) e.vars[j] = values[3*j+2];
+            }
             programs_.push_back(prog);
         }
         world_.elements.push_back(std::move(e));
     }
+    // 0x44cd00: byte at row b, column a represents pair (a,b).
+    if (pd.collection.size() >= 0x10000/4) {
+        auto byte = [&](size_t off) { return (std::uint32_t(pd.collection[off/4]) >> (8*(off%4))) & 255; };
+        for (size_t b=0;b<world_.elements.size();++b) for (size_t a=b+1;a<world_.elements.size();++a) {
+            unsigned color=byte(b*256+a);
+            if (color) collisionMap_[{int(b),int(a)}] = int(color);
+        }
+    }
     accum_ = 0;
+}
+
+std::string BrainVM::projectForExit(int code) {
+    if (code <= 0 || code > 999) return {};
+    std::ostringstream s; s << "level" << std::setfill('0') << std::setw(3) << code << ".prj";
+    return s.str(); // 0x4417e0; multilev.ini rows select loading images, not project names.
+}
+LevelSelection BrainVM::selectLevel(const std::filesystem::path& gameDir,int code) {
+    LevelSelection level; level.project=projectForExit(code);
+    if(level.project.empty()) return level;
+    std::ifstream file(findCI(gameDir,"multilev.ini")); std::string row;
+    for(int i=0;i<code && std::getline(file,row);++i) {
+        if(i==code-1) { std::stringstream ss(row); std::getline(ss,level.loadingScreen,'|'); std::getline(ss,level.background,'|'); }
+    }
+    return level;
+}
+bool BrainVM::transition(const std::filesystem::path& gameDir) {
+    auto name = selectLevel(gameDir,world_.exitCode).project;
+    if (name.empty()) return false;
+    AssetStore st; st.open(gameDir);
+    load(ProjectData::load(st,name),gameDir);
+    return true;
+}
+
+std::int32_t BrainVM::groundHeight(int index) {
+    if (world_.groundElement < 0) return scene_ ? scene_->groundLevel(world_,index) : 0;
+    const auto& g = world_.elements[world_.groundElement];
+    const auto& e = world_.elements[index];
+    auto it = impl_->meshes.find(g.model);
+    if (it == impl_->meshes.end() || it->second.parts.empty()) return scene_ ? scene_->groundLevel(world_,index) : 0;
+    // 0x40189d: XZ triangle inclusion and plane interpolation. d3m coordinates are world millimetres.
+    const double x = double(e.pos.x)/kMt, z = double(e.pos.z)/kMt;
+    double best = 0, single = 0, distance = std::numeric_limits<double>::infinity();
+    int hits=0; const double top=double(e.pos.y)+double(e.radius)*512;
+    for (const auto& part : it->second.parts) for (const auto& f : part.faces) for (size_t k=2;k<f.size();++k) {
+        const auto &a=part.vertices[f[0]], &b=part.vertices[f[k-1]], &c=part.vertices[f[k]];
+        double det=(b[2]-c[2])*(a[0]-c[0])+(c[0]-b[0])*(a[2]-c[2]);
+        if (std::abs(det)<1e-12) continue;
+        double u=((b[2]-c[2])*(x-c[0])+(c[0]-b[0])*(z-c[2]))/det;
+        double v=((c[2]-a[2])*(x-c[0])+(a[0]-c[0])*(z-c[2]))/det;
+        if (u < -1e-8 || v < -1e-8 || u+v > 1+1e-8) continue;
+        double y=(u*a[1]+v*b[1]+(1-u-v)*c[1])*kMt;
+        single=y; ++hits;
+        if(y>=top) continue;
+        double d=y>e.pos.y ? y-e.pos.y : top-y;
+        if (d<distance) { distance=d; best=y; }
+    }
+    return wrap(std::int64_t((hits==1 ? single : best)/512)*512);
 }
 
 int BrainVM::advance(double dt) {
@@ -424,11 +538,12 @@ std::int32_t BrainVM::cosB(std::int32_t a) const { return std::int32_t(std::lrou
 
 std::uint32_t BrainVM::nextRandom() {
     // 0x45f540: pointer into random.bin advances one byte per call, wraps after 1997 bytes.
-    // GUESS: the "frame counter" (0x57f000) is replaced by the tick count so runs are deterministic.
+    // 0x57f000 counts shared updates, incremented before brains by 0x45f7b0.
     if (randomBytes_.size() < 2000) return world_.tickCount * 2654435761u;
-    world_.randomPtr = (world_.randomPtr + 1) % 1997;
+    if (world_.randomPtr >= 1997) world_.randomPtr = 0;
+    ++world_.randomPtr;
     std::uint32_t d; std::memcpy(&d, &randomBytes_[world_.randomPtr], 4);
-    std::uint32_t c = world_.tickCount;
+    std::uint32_t c = world_.updateCount;
     return (c + (c << 16) + d) >> 1;
 }
 
@@ -445,12 +560,46 @@ void BrainVM::runCollisions() {
         if (ai >= int(els.size()) || bi >= int(els.size())) continue;
         Element& a = els[ai]; Element& b = els[bi];
         if ((a.flags & 0x81) != 0x81 || (b.flags & 0x81) != 0x81) continue;
-        std::int64_t rr = std::int64_t(a.radius) + b.radius;
-        std::int64_t dx = std::int64_t(a.pos.x - b.pos.x) >> 9, dy = std::int64_t(a.pos.y - b.pos.y) >> 9, dz = std::int64_t(a.pos.z - b.pos.z) >> 9;
+        bool boxes=(a.flags & b.flags & kFlagSphere2)!=0;
+        std::int64_t rr = boxes ? std::int64_t(a.boxRadius)+b.boxRadius : std::int64_t(a.radius) + b.radius;
+        std::int64_t dx = std::int64_t(wrap(std::int64_t(a.pos.x) - b.pos.x)) >> 9, dy = std::int64_t(wrap(std::int64_t(a.pos.y) - b.pos.y)) >> 9, dz = std::int64_t(wrap(std::int64_t(a.pos.z) - b.pos.z)) >> 9;
         if (std::llabs(dx) >= rr || std::llabs(dy) >= rr || std::llabs(dz) >= rr) continue;
-        if (std::sqrt(double(dx * dx + dy * dy + dz * dz)) > double(rr)) continue;
+        if (coarseSqrt(std::uint64_t(dx*dx)+std::uint64_t(dy*dy)+std::uint64_t(dz*dz)) > rr) continue;
+        if (boxes) {
+            // 0x436c30: vertical intervals, then yaw-rotated XZ rectangles (pitch/roll ignored).
+            auto bounds=[&](const Element& e) {
+                auto b=impl_->bounds[e.model];
+                for(int k=0;k<6;++k) b[k]=wrap(std::int64_t(b[k])*e.scale[k%3]/1000);
+                return b;
+            };
+            auto ab=bounds(a), bb=bounds(b);
+            if (std::int64_t(a.pos.y)+ab[4]*512LL < std::int64_t(b.pos.y)+bb[1]*512LL ||
+                std::int64_t(b.pos.y)+bb[4]*512LL < std::int64_t(a.pos.y)+ab[1]*512LL) continue;
+            using Point=std::array<double,2>;
+            auto corners=[&](const Element& e,const std::array<std::int32_t,6>& bound) {
+                std::array<Point,4> p; int angle=normAngle(e.rot.y)>>6;
+                auto sn=sinBig(angle),cs=sinBig(angle+720);
+                for(int i=0;i<4;++i) {
+                    std::int64_t x=bound[(i==1||i==2)?3:0],z=bound[i>=2?5:2];
+                    p[i]=angle ? Point{double((cs*x>>15)-(sn*z>>15)+(e.pos.x>>9)),double((sn*x>>15)+(cs*z>>15)+(e.pos.z>>9))} : Point{double(x+(e.pos.x>>9)),double(z+(e.pos.z>>9))};
+                } return p;
+            };
+            auto ap=corners(a,ab),bp=corners(b,bb);
+            bool separated=false;
+            for(const auto& poly : {ap,bp}) for(int i=0;i<2;++i) {
+                double nx=poly[i+1][1]-poly[i][1],nz=poly[i][0]-poly[i+1][0];
+                double amin=1e100,amax=-1e100,bmin=1e100,bmax=-1e100;
+                for(int j=0;j<4;++j) { double av=ap[j][0]*nx+ap[j][1]*nz,bv=bp[j][0]*nx+bp[j][1]*nz;
+                    amin=std::min(amin,av);amax=std::max(amax,av);bmin=std::min(bmin,bv);bmax=std::max(bmax,bv); }
+                if(amax<bmin || bmax<amin) separated=true;
+            }
+            if(separated) continue;
+        }
         a.collided |= b.id; b.collided |= a.id;
-        hitColors_.insert(kv.second);
+        events_.push_back({world_.tickCount,ai,"collision " + std::to_string(ai) + " " + std::to_string(bi) + " color " + std::to_string(kv.second)});
+        // 0x44d0f0 -> 0x450f80: colour code is converted to the engine palette index.
+        static constexpr int colors[] = {218,188,128,62,32,27,17,12,7,42,112,183};
+        hitColors_.insert(colors[kv.second <= 11 ? kv.second : 0]);
     }
 }
 
@@ -480,8 +629,10 @@ void BrainVM::runElement(int index) {
 }
 
 void BrainVM::tick() {
+    if (finished()) return;
     // Order reconstructed from the transition loop at 0x442220 (0x442795..0x4427a9) and 0x410450:
     // 0x42a110 animation, 0x44cad0 collisions, 0x403f50/0x404060 input, 0x410450 brains in element order.
+    ++world_.updateCount;
     for (auto& e : world_.elements) e.flags &= ~std::uint32_t(kFlagChild);
     runCollisions();
     for (size_t i = 0; i < world_.elements.size(); ++i) {
@@ -522,22 +673,32 @@ V3 rotateChain(const BrainVM& vm, V3 v, const Vec3& r) {
     return v;
 }
 
-std::int32_t yawTo(const Element& a, const Element& b) {
-    // 0x409e80 (GUESS of convention): heading from a to b in the XZ plane, 1/8 degree resolution.
-    double dx = double(b.pos.x - a.pos.x), dz = double(b.pos.z - a.pos.z);
-    if (dx == 0 && dz == 0) return 0;
-    double ang = std::atan2(dx, dz); // 0 = +z
-    long u = std::lround(ang * 2880.0 / (2 * M_PI));
-    return wrap(std::int64_t(u) * 64);
+int atanIndex(const std::vector<std::int32_t>& table, std::int64_t ratio) {
+    if(table.size()<720) return int(std::atan(double(ratio)/1024)*1440/M_PI);
+    int lo=0,hi=719;
+    for(;;) { int mid=(lo+hi)/2; if(mid==lo || table[mid]==ratio) return mid;
+        if(ratio>table[mid]) lo=mid; else hi=mid; }
 }
-std::int32_t pitchTo(const Element& a, const Element& b) {
-    // 0x409df0 (GUESS): elevation of b above a.
-    double dx = double(b.pos.x - a.pos.x), dz = double(b.pos.z - a.pos.z), dy = double(b.pos.y - a.pos.y);
-    double h = std::sqrt(dx * dx + dz * dz);
-    if (h == 0) return dy < 0 ? wrap(0xffff4c00LL) : 0xb400;
-    long u = std::lround(std::atan(std::fabs(dy) / h) * 2880.0 / (2 * M_PI));
-    std::int32_t r = wrap(std::int64_t(u) * 64);
-    return dy > 0 ? -r : r;
+std::int32_t yawTo(const Element& a, const Element& b, const std::vector<std::int32_t>& table) {
+    // 0x409e80: atan lookup, quadrant correction, then subtract 90 degrees.
+    if(a.index==b.index) return 0;
+    auto dx=wrap(std::int64_t(b.pos.x)-a.pos.x)>>9;
+    auto dz=wrap(std::int64_t(b.pos.z)-a.pos.z);
+    std::int64_t ratio=dx ? std::llabs(std::int64_t(wrap(std::int64_t(dz)*2))/dx) : 512000;
+    int angle=ratio<512000 ? atanIndex(table,ratio) : 720;
+    if(dx<0 && dz<0) angle+=1440;
+    else if(dz<0) angle=2880-angle;
+    else if(dx<0) angle=1440-angle;
+    return (angle-720)*64;
+}
+std::int32_t pitchTo(const Element& a, const Element& b, const std::vector<std::int32_t>& table) {
+    // 0x409df0: targets above produce negative pitch, including the vertical case.
+    auto dx=wrap(std::int64_t(b.pos.x)-a.pos.x)>>9, dz=wrap(std::int64_t(b.pos.z)-a.pos.z)>>9;
+    auto dy=wrap(std::int64_t(b.pos.y)-a.pos.y)>>9;
+    auto h=std::int64_t(std::sqrt(double(dx)*dx+double(dz)*dz));
+    if(!h) return dy>0 ? -0xb400 : 0xb400;
+    int angle=atanIndex(table,(std::llabs(std::int64_t(dy))*1024)/h)*64;
+    return dy>0 ? -angle : angle;
 }
 std::int32_t frictionOne(std::int32_t v, std::int32_t f) {
     std::int32_t p = wrap(std::int64_t(v) * f);
@@ -639,21 +800,22 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
         e0->pos.z = wrap(e0->pos.z + (((wrap(tz - e0->pos.z) >> 9) * k) << 2));
         return 0;
     }
-    if (n == "track") { Element* b = el(1); if (e0 && b) { e0->rot.x = pitchTo(*e0, *b); e0->rot.y = yawTo(*e0, *b); } return 0; }
-    if (n == "track_yr") { Element* b = el(1); if (e0 && b) e0->rot.y = yawTo(*e0, *b); return 0; }
+    if (n == "track") { Element* b = el(1); if (e0 && b) { e0->rot.x = pitchTo(*e0, *b,impl_->atan); e0->rot.y = yawTo(*e0, *b,impl_->atan); } return 0; }
+    if (n == "track_yr") { Element* b = el(1); if (e0 && b) e0->rot.y = yawTo(*e0, *b,impl_->atan); return 0; }
     // --- flags
     if (n == "on") { if (e0) { e0->flags |= kFlagOn; ev("on", e0->index); if (scene_) scene_->elementEvent(e0->index, "on"); } return 0; }
     if (n == "off") { if (e0) { if (e0->flags & kFlagOn) ev("off", e0->index); e0->flags &= ~std::uint32_t(kFlagOn); if (scene_) scene_->elementEvent(e0->index, "off"); } return 0; }
     if (n == "show") { if (e0) { e0->flags |= kFlagVisible; if (scene_) scene_->elementEvent(e0->index, "show"); } return 0; }
     if (n == "hide") { if (e0) { e0->flags &= ~std::uint32_t(kFlagVisible); if (scene_) scene_->elementEvent(e0->index, "hide"); } return 0; }
+    if (n == "box_collisions_on") { if(e0) e0->flags |= kFlagSphere2; return 0; }
+    if (n == "box_collisions_off") { if(e0) e0->flags &= ~std::uint32_t(kFlagSphere2); return 0; }
     if (n == "collisions_on") { if (e0) e0->flags |= kFlagCollide; return 0; }
     if (n == "collisions_off") { if (e0) e0->flags &= ~std::uint32_t(kFlagCollide); return 0; }
     if (n == "translucent") { if (e0) { e0->flags = (e0->flags & ~std::uint32_t(kFlagTranslucent)) | ((arg(1) & 1) << 5); if (scene_) scene_->elementEvent(e0->index, "translucent"); } return 0; }
     if (n == "state") { return (arg(0) != 0 && idxOf(w, arg(0)) >= 0) ? std::int32_t(e0->flags & std::uint32_t(arg(1))) : 0; }
     // --- scale
-    if (n == "scale_set") { if (e0) { e0->scale[0] = arg(1); e0->scale[1] = arg(2); e0->scale[2] = arg(3);
-        std::int32_t base = scene_ ? scene_->modelRadius(e0->model) : 0;
-        if (base) e0->radius = std::int32_t(std::int64_t(base) * std::max({arg(1), arg(2), arg(3)}) / 1000); } return 0; }
+    // 0x406810 / 0x424b70 update visual/box bounds only; sphere radius is fixed at load.
+    if (n == "scale_set") { if (e0) { e0->scale[0]=arg(1); e0->scale[1]=arg(2); e0->scale[2]=arg(3); } return 0; }
     if (n == "flat_scale_set") { if (e0) { e0->flatScale[0] = arg(1); e0->flatScale[1] = arg(2); } return 0; }
     // --- globals / credits(score)
     if (n == "global") return w.globals[arg(0) & 0x7ff];
@@ -674,7 +836,8 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
         return 0;
     }
     if (n == "ground_set") { w.groundElement = e0 ? int(e0->index) : -1; return 0; }
-    if (n == "ground_level" || n == "agl" || n == "aglevel" || n == "above_ground_level") return (e0 && scene_) ? scene_->groundLevel(w, int(e0->index)) : 0;
+    if (n == "ground_level") return e0 ? groundHeight(int(e0->index)) : 0;
+    if (n == "agl" || n == "aglevel" || n == "above_ground_level") return e0 ? wrap(std::int64_t(e0->pos.y)-groundHeight(int(e0->index))) : 0;
     if (n == "element_index") { return wrap(std::int64_t(arg(0)) + (std::int64_t(arg(1)) << 10)); }
     if (n == "element_id") return e0 ? std::int32_t(e0->id) : 0;
     if (n == "first_element") return refOf(0);
@@ -699,7 +862,7 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
     if (n == "sin_512") return sinB(arg(0));
     if (n == "cos_512") return cosB(arg(0));
     if (n == "random") {
-        std::int32_t lo = arg(0), hi = arg(1); if (lo > hi) std::swap(lo, hi);
+        std::int32_t lo = arg(0), hi = arg(1); if (lo >= hi) return lo;
         std::int32_t v = std::int32_t(nextRandom());
         if (lo >= hi) return hi; // 0x4608b0 (edx>=ecx)
         if (v >= lo && v <= hi) return v;

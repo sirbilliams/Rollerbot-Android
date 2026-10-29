@@ -1,6 +1,6 @@
 # Brain / project language (lane brain)
 
-Status: 340 distinct commands found in the exe table; 87 implemented in `src/brain/Brain.cpp`
+Status: 340 distinct commands found in the exe table; retail command support in `src/brain/Brain.cpp`
 (all 79 distinct commands used by the 14 retail projects except `dbg_color_set`, which is a typo/no-op and absent from the table).
 Everything marked GUESS is inferred from names/values, not confirmed by the exe.
 
@@ -10,12 +10,17 @@ Everything marked GUESS is inferred from names/values, not confirmed by the exe.
   The 3D Rad editor compiles that text into x86 machine code at load time (compiler `0x4125f0`, huge string-based
   function; error strings at 0x471318..0x4718c8: "Unknown symbol", "If...endif nesting error!", "Too many variables defined!").
   Our port does not run machine code; it interprets the same text. Each brain is called once per frame.
-- `.col`: 65,536 bytes; semantics unresolved (collision pairs are set by `collision_map_set`, not read from the .col as far as seen).
+- `.col`: 65,536 bytes: a 256-by-256 **byte pair table**, not terrain. For object indices a>b, byte `b*256+a`
+  stores collision colour code 0..11 (0 disables the pair). `0x44cd00` builds runtime pair records from it;
+  `0x41af10` updates it and rebuilds pairs. Trailer at `0xfe00` stores project settings: first two int32 values are
+  viewport dimensions (converted <<9), then background, further viewport/render settings, and mode fields
+  (`0x442220`). Ground triangles and their spatial index are in the `d3m` model, not this file.
+  `ProjectData::collection` retains int32 storage; BrainVM reads its bytes explicitly.
 - Object record fields used (0-based, from value statistics across all 14 levels; GUESS where noted):
   0 name, 1 model (`./HASH.dat`), 2 sound, 4-6 position in mt (x,y,z), 10-12 rotation in degrees (x,y,z),
-  30 collision id bits (`+0x60`; player 8, aliens 2, bosses 4, apples 64, rings 128), 31 unused-looking partner mask,
+  30 collision id bits (`+0x60`; player 8, aliens 2, bosses 4, apples 64, rings 128), 31 explicit sphere radius in metres (absolute value, converted to millimetres; `0x41..` loader / `0x401eba`),
   32 initial flags (bit0 = on), 33 paused (1 = brain never runs, GUESS; ground scenery), 34 compiled variable table
-  (`count/type/value/slot...`, ignored; initial values come from the `var` lines), 35 object type (2 = 3D object, 5 = sprite/overlay,
+  (`count/type/value/slot...`; editor user values override declaration defaults), 35 object type (2 = 3D object, 5 = sprite/overlay,
   8 = counter, 10/11 = model/scenery; GUESS), 36 viewport `x0/y0/x1/y1` for sprites/cameras, 41-43 scale (1 or 1000).
 - Element struct layout from handlers (stride 0x400, array base 0x57efb0, count 0x57f084): +0x0c pos xyz, +0x18 rot xyz,
   +0x24 velocity xyz, +0x30 spin xyz, +0x54 compiled brain entry, +0x58 flags, +0x5c credits/score, +0x60 id, +0x64 collided ids,
@@ -31,8 +36,14 @@ Everything marked GUESS is inferred from names/values, not confirmed by the exe.
   0x471434) but no retail brain uses them; NOT implemented.
 - Expressions: 32-bit ints; `+ - * /` (divide by 0 gives 0, GUESS), unary `-`, brackets `[ ]` and `( )`, `and or xor` (bitwise;
   comparisons yield -1/0 so they act as logic), comparisons `= <> < > =< <= => >=` (exe operator set 0x471820 `/|*|-|+|=|!|<|>`).
-  Precedence (GUESS, standard): `or/xor` < `and` < comparison < `+ -` < `* /`. A bare number right after an operand
-  (`collision(element,2)0`) is treated as `<>` (GUESS).
+  Precedence is compiler reduction order, **not C precedence**: the operator table at `0x471820`, processed by
+  `0x414a..` / `0x415590`, reduces `/`, then `*`, then `-`, then `+`, then equality/inequality and ordered comparisons,
+  then bit operators. Thus `8*6/4` produces 8 (division first), not 12. Square brackets force grouping.
+  `0x414e30` extracts function arguments through `)`; `0x415ac0` emits temporary references spelled `@N`.
+  In the retail condition `collision(element,2)0`, the first call becomes `@0` and the leftover zero yields `@00`,
+  still temporary slot zero. Thus the condition tests the raw collision result; no implicit `<>` is inserted.
+  The interpreter accepts this retail trailing-zero spelling; arbitrary numeric suffixes that alias other compiler
+  temporary slots are outside its supported syntax.
 - Number literals take unit suffixes (table 0x471744, converters from thousandths): `mt` = 512,000 raw (0x426ac0, v<<9),
   `dg` = 512 raw per degree (0x426b10), `ms` = 17.067 raw (0x426b80, 512000/30 per tick), `rm` = 0.1024 raw (0x426bf0).
   So positions are 1/512000 m, angles 184,320 per turn, velocity is raw units per frame.
@@ -50,22 +61,36 @@ Everything marked GUESS is inferred from names/values, not confirmed by the exe.
      call its brain (+0x54), increment run counter +0xac; finally decrement 0x57f354 if > 0, increment tick counter 0x57f1dc
      (drives `every_tics`).
 - Order = element list order, everything sequential and immediate; there is no physics other than what brains call
-  (`velocity_update`, `spin_update`, `friction_*`, ...). Frame pacing is the platform's: we use 30 ticks/s (GUESS from the `ms`/`rm` constants).
-- Collision pass 0x44cad0: pairs are registered by `collision_map_set(a,b,color)` (0x41af10, color <= 0xb; 16-byte records at 0x57efc4).
-  Each frame the `+0x64` masks of pair members are cleared, then for every pair where both elements have flags 0x81 and
-  |dx|,|dy|,|dz| (>>9) < r_a + r_b and the true distance <= r_a + r_b, `a.collided |= b.id` and vice versa and the pair colour is
-  remembered for `collision_color`. `collision(e, mask)` = `e.collided & mask`. Radius +0x68 is the model bound (units 1/1000 mt)
-  recomputed on `scale_set`; we derive it from the mesh vertex distance (GUESS).
-- Level start: 0x442220 loads the project, restores globals from `globvars.dat` (2048 int32), runs transition updates; `exit(n)` stores
-  n in 0x57f2dc and ends the run loop. Retail brains call `exit(<level number>)`, `exit(level)` and `exit(-3)`; the next project
-  is picked through `multilev.ini`/0x4417e0 (rows of `loading-screen|default` PCX names, not level numbers); exact mapping UNRESOLVED
-  (`BrainVM::world().exitCode` hands the value to the caller).
+  (`velocity_update`, `spin_update`, `friction_*`, ...). Frame pacing is 30 ticks/s: `0x45b6c0` divides QPC frequency by 4500;
+  runtime `0x442220` and editor run loop advance their QPC deadline by 150. This is not a Win32 SetTimer simulation loop.
+- Collision pass `0x44cad0`: clear registered members' masks, require flags 0x81 on both, reject when an absolute
+  axis delta (raw >>9) is >= summed radii, then call distance helper `0x40beb0` (alias `0x40132a`).
+  Radius `+0x68` is explicit project field 31 when nonzero; otherwise `0x44cd00` uses
+  `(width+height+depth)/6` from model bounds, in millimetres. Visual references can be descriptors;
+  BrainVM resolves their geometry before computing bounds. `scale_set` (`0x406810` / `0x424b70`) updates box bounds,
+  **not the sphere radius**. When both elements have flag 0x100 (`box_collisions_on`), use `+0x78` horizontal corner
+  radius, then `0x436c30` (alias `0x401f6e`): Y interval overlap and yaw-rotated XZ rectangles; pitch/roll are ignored.
+  Successful pairs OR each other's IDs and remember a colour. `0x44d0f0` / `0x450f80` convert pair codes 1..11 to
+  palette indices `188,128,62,32,27,17,12,7,42,112,183`, which is what `collision_color` accepts.
+- Level start: `0x442220` loads state and restores globals; `exit(n)` stores n at `0x57f2dc`.
+  Selection loop `0x441cb0` formats positive n as `levelNNN.prj`; `0x4417e0` reads the nth (one-based)
+  `multilev.ini` row for `loading-screen|background|`. Those rows do not name the next project.
+  `exit(-3)` ends the standalone session, `-2` returns to the engine/editor, and `-4` selects a saved project;
+  negative codes are exposed without loading a numbered project. `projectForExit`, `selectLevel`, and explicit
+  `transition` are additive APIs. Existing callers still receive `world().exitCode`; transitions are never automatic.
+  Globals and random/update state survive subsequent `load`/`transition` calls; the first load reads `globvars.dat`.
+  `level001` is the title/demo; Space exits with 3, entering the first playable stage, `level003`.
 - Globals: `global(n)`, `global_set`, `global_add`, index masked with 0x7ff (0x40a010..0x40a050). Used as the game state bus
   (220 lives, 201 fruit collected, 203 speed-up points, 205 power, 206/207 get-ready, 210 game over, 212 sound select, 213 time limit).
-  `global_set` also feeds a network mirror (0x57f540) that we ignore. Persistence (`globals_save/globals_load`, `globvars.dat`) is in 0x4125f0/0x442220, NOT implemented.
+  `global_set` also feeds a network mirror (0x57f540) that we ignore. Disk writes and explicit script `globals_save/globals_load` remain unimplemented; inter-project globals are carried in memory.
 - Score: `score(e)`, `score_set(e,v)`, `score_add(e,v)` are aliases of `credits*` (the +0x5c field; same handlers 0x40c9a0/0x40c980/0x40c960).
   The visible score digits are a `Score Counter` element (type 8) whose own brain (user vars `pts188` ... = points per collision colour)
-  presumably reads the pair colours; the high-score file format is still unidentified.
+  reads palette collision colours and adds its configured user points to `global(gindex)`, then copies that global to
+  its credits. Ignoring the serialized user values silently makes all awards zero. Bonus ring code 5 maps to palette 27,
+  whose configured award is 500; fruit awards are 25. Alien contact code 2 awards 50 through the same counter.
+  The player brain owns lives: unpowered ID-2 collision decrements global 220, disables collisions, shrinks the player,
+  waits and respawns; get-ready global 216 temporarily protects it. No engine life deduction is added.
+  Each level's initialization brain decides whether to reset lives/score; high-score file format remains unidentified.
 
 ## 4. Command semantics implemented
 Positions/angles/velocities are raw ints (see units). `e` is an element reference.
@@ -78,13 +103,26 @@ Positions/angles/velocities are raw ints (see units). `e` is an element referenc
 - Hierarchy: `join(a,b)` copies pos,rot,vel,spin a->b (0x40b280); `join_pos` copies pos and velocity (0x40b2f0); `child_pos(e,parent,x,y,z)` places e at parent plus the offset
   rotated through the parent's rotation using 15-bit sinusbig.bin (0x409af0); `child_rot` copies rotation and sets the child flag (0x409cb0);
   `follow(e,target,y,z,k)` eases e toward target + offset(0,y,z rotated by target yaw): pos += ((goal-pos)>>9)*k<<2 (0x40b630);
-  `track(a,b)` sets a's pitch and yaw to face b, `track_yr` only yaw (0x409df0/0x409e80; the atan conventions are GUESSES).
+  `track(a,b)` sets pitch and yaw, `track_yr` only yaw (`0x40bb50`/`0x40bc50` call
+  `0x409df0`/`0x409e80`). +X means negative yaw, +Z means zero yaw, and above means negative pitch;
+  vertical targets above/below yield -90/+90 degrees. The engine binary-searches `atan.bin` (`0x44c270`) and returns eighth-degree steps.
 - Flags: `on/off/show/hide/collisions_on/collisions_off/translucent(e,0|1)/state(e,mask)` (0x40c020, 0x40bff0, 0x40c090, 0x40c0b0, 0x40c050, 0x40c070, 0x451ed0, 0x40cac0).
 - Queries: `collision`, `collision_color(n)`, `collision_map_set(a,b,color)`, `nearest_element(e,idmask)` (nearest `on` element with matching id bits, 0 if none; 0x407330),
   `distance(a,b)` (0x44c3a0), `element_index(ref,n)`, `element_id(e)`, `first_element()`, `execute(e)` (runs e's brain now, depth-limited),
-  `ground_set(e)` + `ground_level(e)` (non-zero over the ground mesh, 0 over water/void; the exe queries the ground mesh with 0x40189d/0x40228e; ours is an IScene hook, GUESS),
-  `sin_512/cos_512(angle)` = round(sin(a/29335)*512) (0x4077b0), `random(lo,hi)` (0x40c670/0x45f540/0x4608b0: bytes of random.bin plus the frame counter; GUESS that
-  tick count replaces the counter), `every_tics(period,until)` true when tick < until and tick & (period-1) == 0 (0x40b5c0).
+  `ground_set(e)` selects the ground; the loader initially selects the last `d3m` even when its brain is paused.
+  `ground_level(e)` returns surface Y in raw units, not a boolean or altitude. `agl` is element Y minus surface Y
+  (`0x409360` / `0x409390`). Dispatcher `0x401109` chooses indexed triangle query `0x40189d` or grid query `0x40228e`.
+  The triangle path uses XZ inclusion and plane interpolation; absence returns zero. d3m integer coordinates are
+  millimetres; using them as metres makes the entire world appear solid. BrainVM owns geometry queries with IScene fallback.
+  Floor following is performed by brain commands; `ground_level` has no position side effect. Retail player brains clamp
+  landing Y themselves and use zero ground height to detect water.
+  `sin_512/cos_512(angle)` = round(sin(a/29335)*512) (0x4077b0),
+  `random(lo,hi)` (`0x40c670` / `0x45f540` / `0x4608b0`): random pointer starts at byte zero (`0x404801`),
+  resets to zero when >=1997, then advances before reading a little-endian DWORD (offsets 1..1997 inclusive).
+  Add update counter `c + (c<<16)` with uint32 wrap, shift right one, then wrap into the inclusive requested range.
+  When lo>=hi return lo without consuming bytes. Counter `0x57f000` advances in shared frame/message update `0x45f7b0`,
+  before brain evaluation, distinct from `every_tics`' simulation counter. Headless ticks explicitly advance `World::updateCount`;
+  transition/menu pumping in the original can advance it further, so a session's initial update count is an input to replay. `every_tics(period,until)` true when tick < until and tick & (period-1) == 0 (0x40b5c0).
 - Input: `keyboard(scancode)` -1 when held (scancode->VK->GetAsyncKeyState, 0x40b370; 29 = Ctrl, 75/77 = left/right arrows, 57 = space), `joy1_x`, `joy_b`, `any_input`.
 - Audio/scene: `play_sound(e)` (plays e's own sound, requires sound handle), `stop_sound`, `sound_rate_set`, `listener(e)`, `light_color_set`, `light_intensity_set`,
   `3dbg_color_set` (background colour), `scale_set(e,x,y,z)`, `flat_scale_set(e,x,y)`; all forwarded through `IScene/IAudio`.
@@ -439,7 +477,22 @@ Positions/angles/velocities are raw ints (see units). `e` is an element referenc
 | host | stmt | 0 | 0x446180 |  |
 
 ## 6. Unknown / open
-- Compiler details (operator precedence, truthiness of bare values, `goto`/labels/`run`/`play`), exact random seeding, pitch/yaw sign conventions.
+- Compiler `goto`/labels/`run`/`play`; non-retail operator corner cases and division-by-zero behavior.
 - Display-side effects of `translucent`, `animate`, sprite viewports (fields 36-38), and the Score Counter drawing (type 8).
-- multilev.ini row meaning and mapping from `exit(n)` to the next project; globals_save/globals_load; high-score persistence.
-- `.col` contents (maybe unused at runtime); `dbg_color_set` absent from table.
+- Explicit globals_save/globals_load commands, saved-project exit(-4), and high-score disk persistence.
+- `dbg_color_set` absent from table.
+- Numeric fidelity limits: visual frame transforms depend on the assets decoder; ground edges use floating-point
+  barycentric inclusion, while the exe uses integer XZ inclusion before plane interpolation. Collision distance follows
+  the exponent-normalized integer square-root lookup (`0x45ea10`); layered ground selection ranks intersections against
+  player Y plus collision radius (`0x40189d`). Retail route tests exercise the flat floor.
+
+## 7. Deterministic input regressions
+`rbbrain --keys '0:;110:77;126:;222:75;238:;292:29;306:'` replaces held keys at each zero-based tick;
+plain `--keys 57,29` still holds those keys from tick zero. No positions, globals, or collision state are injected.
+`tests/brain/routes.cmake` runs each trace twice under timeout and checks exact equality plus gameplay outcomes:
+- level001, Space at tick 0: exit 3 after one tick, next project level003.prj.
+- level003, the schedule above: player 53 jumps through bonus ring 74 at tick 300; score 0 -> 500, lives remain 3.
+- level003, `0:;175:77;191:`: player hits alien 159 at tick 220, lives 3 -> 2 (ID collision event asserted).
+Synthetic unit fixtures additionally check expression reduction, trailing suffixes, cardinal track signs, slope height/altitude,
+void, sphere/box selection, palette conversion, random wrap boundaries, and globals across loads.
+Build and CTest run inside omtbuild, with per-test timeouts. No retail files or decompiled function bodies are fixtures.
