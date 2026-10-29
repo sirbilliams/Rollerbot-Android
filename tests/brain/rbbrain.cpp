@@ -62,11 +62,13 @@ int main(int argc, char** argv) {
     }
     try {
         AssetStore store; store.open(game);
+        if (proj.find('.') == std::string::npos) proj += ".prj";
         ProjectData pd = ProjectData::load(store, proj);
         MeshScene scene; scene.store = &store;
         MockAudio audio; MockInput input; input.keys = keys; input.any = !keys.empty();
         BrainVM vm; vm.setServices(&scene, &audio, &input);
         vm.load(pd, game);
+        for (auto& m : vm.compileErrors()) std::printf("compile error: %s\n", m.c_str());
         std::printf("project %s objects %zu brains %d\n", proj.c_str(), pd.objects.size(), vm.brainCount());
         struct Snap { Vec3 pos, rot; std::uint32_t flags; std::int32_t credits; };
         std::vector<Snap> prev;
@@ -94,7 +96,7 @@ int main(int argc, char** argv) {
         int moved = 0, on = 0;
         for (size_t i = 0; i < w.elements.size(); ++i) { moved += (w.elements[i].pos.x || w.elements[i].pos.y || w.elements[i].pos.z); on += (w.elements[i].flags & 1); }
         if (summary || !trace) {
-            std::printf("ticks %u exit %d elements-on %d unknown-commands:", w.tickCount, w.exitCode, on);
+            std::printf("ticks %u exit %d elements-on %d collision-pairs %zu unknown-commands:", w.tickCount, w.exitCode, on, vm.collisionPairs());
             for (auto& u : vm.unknownCommands()) std::printf(" %s", u.c_str());
             std::printf("\n");
         }

@@ -127,6 +127,8 @@ public:
     void clearEvents() { events_.clear(); }
     const std::set<std::string>& unknownCommands() const { return unknown_; }
     bool finished() const { return world_.exitCode != -1; }
+    const std::vector<std::string>& compileErrors() const { return compileErrors_; }
+    size_t collisionPairs() const { return collisionMap_.size(); }
     int brainCount() const { return int(programs_.size()); }
 private:
     friend class Brain;
@@ -141,6 +143,7 @@ private:
     std::vector<std::int32_t> randomTab_;  // random.bin
     std::vector<std::uint8_t> randomBytes_;
     double accum_ = 0;
+    std::vector<std::string> compileErrors_;
     std::map<std::pair<int,int>, int> collisionMap_;
     std::set<int> hitColors_;
     std::vector<std::uint8_t> collisionPairs_;

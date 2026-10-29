@@ -11,7 +11,7 @@ int main() {
     std::vector<std::string> errs;
     auto b = compileBrain({"var a=0", "var b=1mt/3", "if a=0 and b>5", "a=a+1", "else", "a=7", "endif", "hide(element)"}, &errs);
     CHECK(errs.empty());
-    ProjectData pd; ObjectRecord o; o.name = "t"; o.position = {1, 2, 3}; o.fields.assign(50, "0");
+    ProjectData pd; ObjectRecord o; o.name = "t"; o.position = {1, 2, 3}; o.fields.assign(50, "0"); o.fields[32] = "1";
     pd.objects.push_back(o);
     BrainRecord br; br.objectIndex = 0; br.lines = {"var a=0", "var b=1mt/3", "if a=0 and b>5", "a=a+1", "else", "a=7", "endif", "position_x_set(element,position_x(element)+1mt)", "global_add(5,1)"};
     pd.brains.push_back(br);

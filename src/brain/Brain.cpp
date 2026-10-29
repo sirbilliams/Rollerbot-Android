@@ -27,6 +27,8 @@ std::string lower(std::string s) { for (auto& c : s) c = char(std::tolower((unsi
 enum class T { Num, Id, Op, End };
 struct Tok { T t; std::string s; std::int32_t num = 0; };
 
+bool isDecl(const std::string& k) { return k == "var" || k.rfind("user", 0) == 0; }
+
 std::vector<Tok> lex(const std::string& line, std::string* err) {
     std::vector<Tok> out;
     size_t i = 0, n = line.size();
@@ -40,8 +42,17 @@ std::vector<Tok> lex(const std::string& line, std::string* err) {
             size_t k = j;
             while (k < n && std::isalpha((unsigned char)line[k])) ++k;
             std::string num = line.substr(i, j - i), unit = lower(line.substr(j, k - j));
-            if (unit != "mt" && unit != "dg" && unit != "ms" && unit != "rm") unit.clear();
-            else j = k;
+            if (unit != "mt" && unit != "dg" && unit != "ms" && unit != "rm") {
+                unit.clear();
+                // identifiers may start with a digit (e.g. 3dbg_color_set, 0x4720..): word = digits + letters/_/digits
+                size_t w = i;
+                while (w < n && (std::isalnum((unsigned char)line[w]) || line[w] == '_')) ++w;
+                bool allDigits = true, hasAlpha = false;
+                for (size_t q = i; q < w; ++q) { if (!std::isdigit((unsigned char)line[q])) allDigits = false; if (std::isalpha((unsigned char)line[q]) || line[q] == '_') hasAlpha = true; }
+                if (!allDigits && hasAlpha && j == i + (num.size()) && num.find('.') == std::string::npos) {
+                    out.push_back({T::Id, line.substr(i, w - i)}); i = w; continue;
+                }
+            } else j = k;
             // thousandths, as the exe's number reader (0x401ded) hands to the unit converters
             double v = std::atof(num.c_str());
             std::int64_t th = std::int64_t(std::floor(v * 1000.0 + 1e-6));
@@ -262,7 +273,7 @@ std::shared_ptr<Brain> compileBrain(const std::vector<std::string>& lines, std::
     std::vector<Pend> decls;
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string err; auto t = lex(lines[i], &err);
-        if (t.size() >= 2 && t[0].t == T::Id && lower(t[0].s) == "var" && t[1].t == T::Id) {
+        if (t.size() >= 2 && t[0].t == T::Id && isDecl(lower(t[0].s)) && t[1].t == T::Id) {
             std::string nm = lower(t[1].s);
             if (!vars.count(nm)) { int s = int(vars.size()); vars[nm] = s; b->varNames.push_back(nm); b->init.push_back(0); }
             decls.push_back({nm, std::vector<Tok>(t.begin() + 2, t.end()), int(i + 1)});
@@ -291,7 +302,7 @@ std::shared_ptr<Brain> compileBrain(const std::vector<std::string>& lines, std::
         Parser ps; ps.t = t; ps.vars = &vars;
         std::string kw = t[0].t == T::Id ? lower(t[0].s) : "";
         Stmt s; s.line = ln;
-        if (kw == "var") continue;
+        if (isDecl(kw) && t.size() >= 2 && t[1].t == T::Id) continue;
         if (kw == "if") {
             ps.p = 1; s.k = Stmt::If; s.e = ps.parseOr();
             if (!ps.err.empty() || ps.cur().t != T::End) { report(ln, ps.err.empty() ? "junk after condition" : ps.err); continue; }
@@ -365,7 +376,7 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
         auto gv = st.read("globvars.dat");
         for (size_t i = 0; i + 4 <= gv.size() && i / 4 < kMaxGlobals; i += 4) std::memcpy(&world_.globals[i / 4], &gv[i], 4);
     } catch (const std::exception&) {}
-    programs_.clear(); events_.clear(); unknown_.clear(); collisionMap_.clear(); hitColors_.clear();
+    programs_.clear(); compileErrors_.clear(); events_.clear(); unknown_.clear(); collisionMap_.clear(); hitColors_.clear();
     std::map<std::uint32_t, const BrainRecord*> bm;
     for (auto& b : pd.brains) bm[b.objectIndex] = &b;
     for (size_t i = 0; i < pd.objects.size(); ++i) {
@@ -387,6 +398,7 @@ void BrainVM::load(const ProjectData& pd, const std::filesystem::path& gameDir) 
         if (it != bm.end()) {
             std::vector<std::string> errs;
             auto prog = compileBrain(it->second->lines, &errs);
+            for (auto& m : errs) compileErrors_.push_back("e" + std::to_string(i) + " " + o.name + " " + m);
             e.brain = int(programs_.size());
             e.vars = prog->init;
             programs_.push_back(prog);
