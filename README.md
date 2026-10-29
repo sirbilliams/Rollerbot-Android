@@ -8,15 +8,29 @@ folder of its files). Not affiliated with or endorsed by the rights holders.
 
 ## Status
 
-About 5%: reconnaissance is done, and the shell everything plugs into exists (SDL2 + GLES2 window and
-loop, input, widescreen modes, Android launcher with a second-screen stub, Flatpak, CI). The stub game draws a
-test pattern. Assets, scene, brain VM, audio and UI lanes are being built in `src/<lane>`.
+**About 55% (October 2026).** The game runs from your own disc's data in this rebuild:
+
+- All 14 levels load and run (title, 10 worlds, bonus rounds, the finale), with the original sky, fog,
+  textures and HUD (score, lives, timer, hi-score, apples).
+- Gameplay from the original scripts: rolling, pickups, enemies, lives, level exits carrying score and lives on.
+- Widescreen modes for 16:9 (Fill, Side panels, Stretch, Off); the HUD stays whole in each.
+- Android APK for the AYN Thor: imports straight from your disc (EN/FR/DE/ES/IT), gamepad, bottom-screen
+  panel (status, level select, settings), pauses when the lid closes. Not yet tested on a device.
+- Linux Flatpak builds and runs.
+
+Next: device testing on the Thor, full playthroughs of every level, high scores and polish.
+
+![Level 3 at 1920x1080](docs/screenshots/level3-desert.jpg)
+
+| Title | Every level |
+|---|---|
+| ![Title](docs/screenshots/title.jpg) | ![All levels](docs/screenshots/all-levels.jpg) |
 
 ## Build (desktop)
 
 ```sh
 cmake -S . -B build && cmake --build build -j8 && ctest --test-dir build
-./build/src/platform/rollerbot            # test pattern; Esc quits
+RB_DATA=/path/to/game ./build/src/platform/rollerbot   # the game (test pattern without RB_DATA); Esc quits
 ```
 
 Needs SDL2 and GLES2 dev packages. Environment: `RB_WIDESCREEN=fill|panels|stretch|off`, `RB_FULLSCREEN=1`,
