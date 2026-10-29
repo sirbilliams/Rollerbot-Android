@@ -619,7 +619,7 @@ std::int32_t BrainVM::callCommand(const std::string& name, const std::vector<std
     if (n == "child_rot") {
         Element* p = el(1);
         if (!e0 || !p) return 0;
-        e0->flags |= kFlagChild; e0->rot = p->rot;
+        e0->flags |= kFlagChild; e0->rot = p->rot; e0->childRot = {arg(2), arg(3), arg(4)};
         return 0;
     }
     if (n == "follow") {

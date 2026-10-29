@@ -41,6 +41,7 @@ struct Element {
     std::string name, model, sound;
     std::int32_t type = 0;           // project field 35 (2=3D object,5=sprite,8=counter,11=model...) guess
     Vec3 pos, rot, vel, spin;        // +0x0c +0x18 +0x24 +0x30
+    Vec3 childRot;                   // +0x9c: offsets given to child_rot (game lane)
     std::int32_t scale[3] = {1000, 1000, 1000};
     std::int32_t flatScale[2] = {1000, 1000};
     std::uint32_t flags = kFlagOn | kFlagVisible | kFlagCollide;
