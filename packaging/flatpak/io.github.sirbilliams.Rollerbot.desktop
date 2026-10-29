@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Rollerbot: A Time Journey
+Comment=Fan port of Rollerbot (bring your own game files)
+Exec=rollerbot-launcher
+Icon=io.github.sirbilliams.Rollerbot
+Categories=Game;AdventureGame;
+Terminal=false

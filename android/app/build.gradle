@@ -1,0 +1,82 @@
+apply plugin: 'com.android.application'
+
+// NDK: pinned for reproducible builds; override with -PndkVersion=... if your SDK has another.
+def ndkVer = project.hasProperty('ndkVersion') ? project.property('ndkVersion') : '26.3.11579264'
+
+// Short git commit of the build, shown by the launcher's "App version" (falls back to "unknown").
+def gitCommit = 'unknown'
+try {
+    def proc = ['git', 'rev-parse', '--short', 'HEAD'].execute(null, rootDir)
+    def out = proc.text.trim()
+    if (proc.waitFor() == 0 && out) gitCommit = out
+} catch (Exception ignored) { }
+
+android {
+    namespace 'io.github.sirbilliams.rollerbot'
+    compileSdkVersion 34
+    ndkVersion ndkVer
+
+    defaultConfig {
+        applicationId 'io.github.sirbilliams.rollerbot'    
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName '0.1'
+        resValue 'string', 'git_commit', gitCommit
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-24'
+                abiFilters 'arm64-v8a'        // AYN Thor and every current Android handheld
+            }
+        }
+    }
+
+    // (CI secrets: RB_KEYSTORE_B64, RB_KEYSTORE_PASSWORD; the key alias is 'rollerbot')
+    // A stable signing key, so each new APK installs over the last one (keeping the game and saves):
+    // CI sets RB_KEYSTORE (+ RB_KEYSTORE_PASSWORD, RB_KEY_ALIAS, RB_KEY_PASSWORD) from the repo
+    // secrets (.github/workflows/android.yml). Without it the build uses the SDK debug key, which
+    // differs from machine to machine.
+    signingConfigs {
+        if (System.getenv('RB_KEYSTORE')) {
+            stable {
+                storeFile file(System.getenv('RB_KEYSTORE'))
+                storePassword System.getenv('RB_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('RB_KEY_ALIAS') ?: 'rollerbot'
+                keyPassword System.getenv('RB_KEY_PASSWORD') ?: System.getenv('RB_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Debug builds are signed (stable key above, else the SDK debug key), so the APK installs directly.
+            if (signingConfigs.findByName('stable') != null) signingConfig signingConfigs.stable
+            externalNativeBuild { cmake { arguments '-DCMAKE_BUILD_TYPE=RelWithDebInfo' } }
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    // SDL needs the native libs built before assets are merged
+    applicationVariants.all { variant ->
+        tasks["merge${variant.name.capitalize()}Assets"]
+            .dependsOn("externalNativeBuild${variant.name.capitalize()}")
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+}

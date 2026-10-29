@@ -7,3 +7,8 @@ build*/
 *.pcx
 *.x
 *.dat
+android/app/jni/SDL/
+android/app/src/main/java/org/libsdl/
+android/.gradle/
+android/local.properties
+.cxx/

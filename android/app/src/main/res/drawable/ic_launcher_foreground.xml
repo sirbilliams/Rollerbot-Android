@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Original icon: a wheel with spokes -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="@color/ic_fg" android:strokeWidth="7"
+        android:pathData="M54,54m-22,0a22,22 0,1 1,44 0a22,22 0,1 1,-44 0" />
+    <path android:strokeColor="@color/ic_fg" android:strokeWidth="4"
+        android:pathData="M54,32L54,76M32,54L76,54M38.4,38.4L69.6,69.6M69.6,38.4L38.4,69.6" />
+    <path android:fillColor="@color/ic_fg" android:pathData="M54,54m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+</vector>
