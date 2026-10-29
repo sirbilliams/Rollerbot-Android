@@ -1,4 +1,5 @@
-add_executable(rbbrain rbbrain.cpp)
+add_executable(rbbrain rbbrain.cpp full_routes.cpp)
+target_compile_definitions(rbbrain PRIVATE RB_ROUTES_LIBRARY)
 target_link_libraries(rbbrain PRIVATE rb_brain)
 add_executable(brain_units units.cpp)
 target_link_libraries(brain_units PRIVATE rb_brain)
@@ -14,4 +15,12 @@ if(BRAIN_GAME)
   add_test(NAME brain_scripted_routes
     COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:rbbrain> -DGAME=${BRAIN_GAME} -P ${CMAKE_CURRENT_SOURCE_DIR}/routes.cmake)
   set_tests_properties(brain_level001_stable brain_scripted_routes PROPERTIES TIMEOUT 90)
+endif()
+add_executable(brain_full_routes full_routes.cpp)
+target_link_libraries(brain_full_routes PRIVATE rb_brain)
+if(BRAIN_GAME)
+  add_test(NAME brain_full_game_routes COMMAND ${CMAKE_COMMAND}
+    -DEXE=$<TARGET_FILE:brain_full_routes> -DGAME=${BRAIN_GAME}
+    -DROUTES=${CMAKE_SOURCE_DIR}/tools/routes -P ${CMAKE_CURRENT_SOURCE_DIR}/full_routes.cmake)
+  set_tests_properties(brain_full_game_routes PROPERTIES TIMEOUT 900)
 endif()
