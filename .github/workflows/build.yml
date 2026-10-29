@@ -118,6 +118,11 @@ jobs:
       # Game-file-free tests only (the game's files are never in the repo).
       - name: Tests
         run: timeout 600 xvfb-run -a ctest --test-dir build --output-on-failure
+      - name: Language-set selection (JVM unit test)
+        run: |
+          mkdir -p .jt
+          javac -d .jt android/app/src/main/java/io/github/sirbilliams/rollerbot/LangSets.java tests/lang/LangSetsTest.java
+          timeout 60 java -cp .jt io.github.sirbilliams.rollerbot.LangSetsTest
       - name: Shell smoke run (Xvfb, 120 frames, screenshot)
         run: |
           mkdir -p .shots
