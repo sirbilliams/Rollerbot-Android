@@ -1,6 +1,9 @@
 apply plugin: 'com.android.application'
 
 // NDK: pinned for reproducible builds; override with -PndkVersion=... if your SDK has another.
+// CI emulator job only: -PemuAbi=x86_64 builds the x86_64 ABI and exports RollerActivity so adb can start it.
+// Without it the APK is arm64-only and RollerActivity stays private (the release APK).
+def emuAbi = project.hasProperty('emuAbi') ? project.property('emuAbi') : null
 def ndkVer = project.hasProperty('ndkVersion') ? project.property('ndkVersion') : '26.3.11579264'
 
 // Short git commit of the build, shown by the launcher's "App version" (falls back to "unknown").
@@ -23,10 +26,11 @@ android {
         versionCode 1
         versionName '0.1'
         resValue 'string', 'git_commit', gitCommit
+        manifestPlaceholders = [gameExported: emuAbi ? 'true' : 'false']
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-24'
-                abiFilters 'arm64-v8a'        // AYN Thor and every current Android handheld
+                abiFilters(emuAbi ?: 'arm64-v8a')        // AYN Thor and every current Android handheld
             }
         }
     }
