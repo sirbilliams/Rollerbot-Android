@@ -9,8 +9,8 @@ namespace rb {
 
 struct MenuModel {
   std::string title = "Paused";
-  std::vector<std::string> items;
-  int selected = 0;
+  std::vector<std::string> items;   // an item starting with '#' is a section header (not selectable, drawn small)
+  int selected = 0;                 // index into items (never a header)
   std::string footer;          // hint line under the panel
   std::string status;          // e.g. "Hi-score 1200"
 };

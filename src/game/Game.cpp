@@ -136,6 +136,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
     plat_ = &p;
     std::string err;
     if (!scene_.init(&err)) { SDL_Log("scene init: %s", err.c_str()); return false; }
+    save_.reset(new GameSave(saveDirectory(plat_->prefDir())));
+    parseLangs();
     try { store_.open(dir_); } catch (const std::exception& e) { SDL_Log("assets: %s", e.what()); return false; }
     if (const char* v = envs("RB_AUDIO_DUMP")) {   // headless: mix offline to a float WAV, one update step at a time
       audio_.init(48000, false);
@@ -146,7 +148,6 @@ class RollerGame : public Game, public HostSink, public HostInput {
       if (!audioOk_) { audio_.init(48000, false); }
     }
     sounds_.reset(new SoundBank(audio_, store_));
-    save_.reset(new GameSave(saveDirectory(plat_->prefDir())));
     setVolume(envs("RB_VOLUME") ? std::atoi(envs("RB_VOLUME")) : (save_->volume >= 0 ? save_->volume : 100), false);
     sounds_->setLog(envs("RB_AUDIO_LOG") != nullptr, [this] { return host_ ? host_->tickCount() : 0u; });
     hudOk_ = hud_.init();
@@ -183,6 +184,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
       if (store_.find(std::string(nm) + ".prj")) loadLevel(nm);
     }
     if (Bridge::takeRestart() && host_) loadLevel(level_);
+    if (int v = Bridge::takeVolume(); v >= 0) setVolume(v, true);
+    if (int l = Bridge::takeLang(); l >= 0 && l < 5) switchLanguage(kLangNames[l]);
     publishStatus();
     if (!host_) return;
     const Input& in = plat_->input();
@@ -300,6 +303,9 @@ class RollerGame : public Game, public HostSink, public HostInput {
     st.paused = paused_;
     if (save_) { st.highScore = save_->highScore(); st.reached = save_->reached; }
     st.menuOpen = menuOpen_;
+    st.volume = volume_;
+    for (size_t i = 0; i < langs_.size(); ++i) { int k = langIndex(langs_[i].first); if (k >= 0) st.langMask |= 1 << k; }
+    st.lang = std::max(0, langIndex(lang_));
     st.widescreen = int(plat_->config().widescreen);
     Bridge::publish(st);
   }
@@ -428,31 +434,79 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (audioOk_) audio_.pauseAll();
   }
   void closeMenu() { menuOpen_ = false; if (audioOk_ && !paused_) audio_.resumeAll(); }
+  // Menu entries by action id: 0 Resume, 1 Restart level, 2 Level select, 3 Widescreen, 4 Volume, 5 Game language (only with 2+ installed sets), 6 Quit game
+  std::vector<int> menuActions() const {
+    std::vector<int> a = {0, 1, 2, 3, 4};
+    if (langs_.size() > 1) a.push_back(5);
+    a.push_back(6);
+    return a;
+  }
   void updateMenu(const Input& in) {
-    const int kItems = 6;
+    auto acts = menuActions();
+    const int kItems = int(acts.size());
     auto lv = unlocked();
     if (in.pressed(Action::Up)) { menuSel_ = (menuSel_ + kItems - 1) % kItems; menuDirty_ = true; }
     if (in.pressed(Action::Down)) { menuSel_ = (menuSel_ + 1) % kItems; menuDirty_ = true; }
+    menuSel_ = std::min(menuSel_, kItems - 1);
+    int act = acts[menuSel_];
     int dx = (in.pressed(Action::Right) ? 1 : 0) - (in.pressed(Action::Left) ? 1 : 0);
-    if (dx && menuSel_ == 2 && !lv.empty()) {
+    if (dx && act == 2 && !lv.empty()) {
       size_t i = std::find(lv.begin(), lv.end(), menuLevel_) - lv.begin();
       i = (i + lv.size() + dx) % lv.size();
       menuLevel_ = lv[i]; menuDirty_ = true;
     }
     bool ok = in.pressed(Action::Accept) || in.pressed(Action::Jump);
-    if (dx && menuSel_ == 3) cycleWidescreen(dx);
-    if (dx && menuSel_ == 4) setVolume(volume_ + 10 * dx, true);
+    if (dx && act == 3) cycleWidescreen(dx);
+    if (dx && act == 4) setVolume(volume_ + 10 * dx, true);
+    if (dx && act == 5) cycleLanguage(dx);
     if (ok) {
-      switch (menuSel_) {
+      switch (act) {
         case 0: closeMenu(); break;
         case 1: closeMenu(); loadLevel(level_); break;
         case 2: { char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", menuLevel_);
                   if (store_.find(std::string(nm) + ".prj")) { closeMenu(); loadLevel(nm); } break; }
         case 3: cycleWidescreen(1); break;
         case 4: setVolume(volume_ >= 100 ? 0 : volume_ + 10, true); break;
-        case 5: flushSave(true); plat_->requestQuit(); break;
+        case 5: cycleLanguage(1); break;
+        case 6: flushSave(true); plat_->requestQuit(); break;
       }
     } else if (in.pressed(Action::Back) || in.pressed(Action::Pause) || in.pressed(Action::Menu)) closeMenu();
+  }
+  // ---- game language: the installed sets come from RB_LANGS ("english=/path;french=/path"), the running one from the save or RB_LANG
+  static constexpr const char* kLangNames[5] = {"english", "french", "german", "spanish", "italian"};
+  static constexpr const char* kLangLabels[5] = {"EN", "FR", "DE", "ES", "IT"};
+  static int langIndex(const std::string& n) { for (int i = 0; i < 5; ++i) if (n == kLangNames[i]) return i; return -1; }
+  void parseLangs() {
+    if (const char* v = envs("RB_LANGS")) {
+      std::stringstream ss(v); std::string t;
+      while (std::getline(ss, t, ';')) { auto e = t.find('='); if (e != std::string::npos) langs_.push_back({t.substr(0, e), t.substr(e + 1)}); }
+    }
+    std::string want = envs("RB_LANG") ? envs("RB_LANG") : (save_ ? save_->lang : "");
+    for (auto& l : langs_) if (l.second == dir_) lang_ = l.first;
+    if (!want.empty() && !envs("RB_DATA_FIXED")) for (auto& l : langs_) if (l.first == want && l.second != dir_) { dir_ = l.second; lang_ = l.first; }
+  }
+  void cycleLanguage(int d) {
+    if (langs_.size() < 2) return;
+    size_t cur = 0;
+    for (size_t i = 0; i < langs_.size(); ++i) if (langs_[i].first == lang_) cur = i;
+    switchLanguage(langs_[(cur + langs_.size() + d) % langs_.size()].first);
+  }
+  // Switch the whole asset set at once (art, sound and text differ per language) and restart the level.
+  void switchLanguage(const std::string& name) {
+    for (auto& l : langs_) {
+      if (l.first != name || name == lang_) continue;
+      std::string old = dir_;
+      try { store_.open(l.second); } catch (const std::exception& e) { SDL_Log("language %s: %s", name.c_str(), e.what()); try { store_.open(old); } catch (const std::exception&) {} return; }
+      dir_ = l.second; lang_ = name;
+      models_.clear(); tex_.clear(); texAspect_.clear(); hudTex_.clear();
+      sounds_.reset(new SoundBank(audio_, store_));
+      sounds_->setLog(envs("RB_AUDIO_LOG") != nullptr, [this] { return host_ ? host_->tickCount() : 0u; });
+      if (save_) { save_->lang = name; save_->touch(); flushSave(true); }
+      SDL_Log("game language: %s (%s)", name.c_str(), dir_.c_str());
+      if (host_) loadLevel(level_);
+      menuDirty_ = true;
+      return;
+    }
   }
   // Master volume in percent (not an original control: the exe only has per-sound volumes). Applied after the mix.
   void setVolume(int pct, bool save) {
@@ -473,10 +527,22 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (menuDirty_ || !menuTex_) {
       MenuModel m;
       m.title = "Paused";
-      m.items = {"Resume", "Restart level", menuLevel_ == 1 ? "Level: title screen" : "Level: " + std::to_string(menuLevel_),
-                 std::string("Screen: ") + wsName(wsShown_ >= 0 ? wsShown_ : int(plat_->config().widescreen)),
-                 "Volume: " + std::to_string(volume_) + "%", "Quit game"};
-      m.selected = menuSel_;
+      auto acts = menuActions();
+      int sel = 0;
+      for (size_t k = 0; k < acts.size(); ++k) {
+        if (acts[k] == 3) m.items.push_back("#Settings");
+        if (int(k) == menuSel_) sel = int(m.items.size());
+        switch (acts[k]) {
+          case 0: m.items.push_back("Resume"); break;
+          case 1: m.items.push_back("Restart level"); break;
+          case 2: m.items.push_back(menuLevel_ == 1 ? "Level select: title" : "Level select: " + std::to_string(menuLevel_)); break;
+          case 3: m.items.push_back(std::string("Widescreen: ") + wsName(wsShown_ >= 0 ? wsShown_ : int(plat_->config().widescreen))); break;
+          case 4: m.items.push_back("Volume: " + std::to_string(volume_) + "%"); break;
+          case 5: { int li = langIndex(lang_); m.items.push_back(std::string("Game language: ") + (li >= 0 ? kLangLabels[li] : "?")); break; }
+          case 6: m.items.push_back("Quit game"); break;
+        }
+      }
+      m.selected = sel;
       m.status = "Hi-score " + std::to_string(save_ ? save_->highScore() : 0);
       m.footer = "Arrows choose   Enter select   Esc back";
       std::vector<uint8_t> px;
@@ -767,6 +833,8 @@ class RollerGame : public Game, public HostSink, public HostInput {
   bool menuOpen_ = false, menuDirty_ = false;
   int menuSel_ = 0, menuLevel_ = 1, wsShown_ = -1;
   GLuint menuTex_ = 0, dimTex_ = 0;
+  std::vector<std::pair<std::string, std::string>> langs_;   // installed language sets: name, folder
+  std::string lang_;
   char padJump_ = std::getenv("RB_PADJUMP") ? std::getenv("RB_PADJUMP")[0] : 'b';   // RB_PADJUMP=a|x|both: which pad button jumps (launcher setting)
 };
 

@@ -16,6 +16,9 @@ struct Status {
   int widescreen = 0;            // rb::Widescreen
   int highScore = 0;             // global 100, persisted
   int reached = 1;               // highest unlocked level number
+  int volume = 100;              // master volume %
+  int lang = 0;                  // active game language, index into english/french/german/spanish/italian
+  int langMask = 0;              // bit i = language i installed
   bool menuOpen = false;         // the in-game pause menu is showing
 };
 
@@ -30,9 +33,13 @@ class Bridge {
   static bool pauseRequested();
   static void requestWidescreen(int m);  // -1 = none
   static int takeWidescreen();
+  static void requestVolume(int pct);    // -1 = none
+  static int takeVolume();
+  static void requestLang(int idx);      // -1 = none
+  static int takeLang();
   static void requestRestart();          // restart the current level
   static bool takeRestart();
-  // "level|lives|fruit|points|paused|widescreen|1,2,3|highScore|reached|menu" for the JNI side
+  // "level|lives|fruit|points|paused|widescreen|1,2,3|highScore|reached|menu|volume|lang|langMask" for the JNI side
   static std::string statusLine();
 };
 
