@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <map>
 #include <sstream>
+#include <chrono>
 
 namespace rb {
 namespace {
@@ -60,12 +61,17 @@ class Overlay2D {
   }
   void begin(const Viewport& vp) {
     vp_ = vp;
+    if (vp.mode == Widescreen::Fill) {   // HUD gets its own 4:3 space fitted inside the whole window, not the cropped 3D area
+      int gw = std::min(vp.winW, vp.winH * 4 / 3), gh = gw * 3 / 4;
+      vp_.glArea = {(vp.winW - gw) / 2, (vp.winH - gh) / 2, gw, gh};
+    }
+    glViewport(0, 0, vp.winW, vp.winH);   // NDC below is window-relative
     glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glUseProgram(prog_);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glEnable(GL_SCISSOR_TEST);
-    glScissor(vp.glArea.x, vp.glArea.y, vp.glArea.w, vp.glArea.h);
+    glScissor(vp_.glArea.x, vp_.glArea.y, vp_.glArea.w, vp_.glArea.h);
   }
   // Source rect (sx..sx+sw of the texture's tw width) drawn at canvas (x,y,w,h) in 640x480 units.
   void draw(GLuint tex, float tw, float th, float sx, float sy, float sw, float sh, float x, float y, float w, float h) {
@@ -107,7 +113,7 @@ struct LevelCfg {
 };
 
 // Scripted input for headless verification: RB_KEYS="75@0-300,57@100-110" (scancode@firstFrame-lastFrame).
-struct KeyScript { int sc, from, to; };
+struct KeyScript { int sc, from, to; std::chrono::steady_clock::time_point t{}; bool seen = false; };
 
 class RollerGame : public Game, public HostSink, public HostInput {
  public:
@@ -140,6 +146,11 @@ class RollerGame : public Game, public HostSink, public HostInput {
 
   void update(double dt) override {
     ++frame_;
+    using clk = std::chrono::steady_clock;
+    auto now = clk::now();
+    if (!t0_.time_since_epoch().count()) { t0_ = now; lastRender_ = now; }
+    for (auto& k : script_) if (k.sc && frame_ == k.from && !k.t.time_since_epoch().count()) k.t = now;   // stamp: key becomes active
+    if (runSeconds_ > 0 && std::chrono::duration<double>(now - t0_).count() > runSeconds_) { logStats(); plat_->requestQuit(); }
     if (int n = Bridge::takeLevelRequest()) {   // companion level select
       char nm[32]; std::snprintf(nm, sizeof nm, "level%03d", n);
       if (store_.find(std::string(nm) + ".prj")) loadLevel(nm);
@@ -163,6 +174,11 @@ class RollerGame : public Game, public HostSink, public HostInput {
 
   void render(const Viewport& vp) override {
     if (!host_) return;
+    {
+      auto n = std::chrono::steady_clock::now();
+      if (lastRender_.time_since_epoch().count()) frameMs_.push_back(std::chrono::duration<double, std::milli>(n - lastRender_).count());
+      lastRender_ = n;
+    }
     syncFrames();
     scene_.setViewport(vp.area.x, vp.area.y, vp.area.w, vp.area.h);
     scene_.setBackground(bg_);
@@ -173,7 +189,23 @@ class RollerGame : public Game, public HostSink, public HostInput {
     if (it != shots_.end()) plat_->screenshot(it->second);
   }
 
-  void shutdown() override { Bridge::publish(Status{}); audio_.shutdown(); }
+  void shutdown() override { if (!statsDone_) logStats(); Bridge::publish(Status{}); audio_.shutdown(); }
+
+  void logStats() {
+    statsDone_ = true;
+    if (frameMs_.size() < 3) return;
+    std::vector<double> v(frameMs_.begin() + 1, frameMs_.end());
+    std::sort(v.begin(), v.end());
+    double sum = 0; for (double x : v) sum += x;
+    int over = 0; for (double x : v) if (x > 25.0) ++over;
+    SDL_Log("frames %zu avg %.2f ms (%.1f fps) p50 %.2f p99 %.2f max %.2f, >25ms: %d", v.size(), sum / v.size(), 1000.0 * v.size() / sum,
+            v[v.size() / 2], v[size_t(v.size() * 0.99)], v.back(), over);
+    if (!latMs_.empty()) {
+      double a = 0, mx = 0; for (double x : latMs_) { a += x; mx = std::max(mx, x); }
+      SDL_Log("input latency (step -> brain tick): n %zu avg %.1f ms max %.1f ms", latMs_.size(), a / latMs_.size(), mx);
+      for (double x : latMs_) SDL_Log("  latency %.1f ms", x);
+    }
+  }
   // App/lid suspend or user pause (platform calls these): silence and freeze audio too.
   void pause() override { paused_ = true; if (audioOk_) audio_.pauseAll(); }
   void resume() override { paused_ = false; if (audioOk_) audio_.resumeAll(); }
@@ -195,7 +227,13 @@ class RollerGame : public Game, public HostSink, public HostInput {
 
   // ---- HostInput
   bool key(int sc) override {
-    for (auto& k : script_) if (k.sc == sc && frame_ >= k.from && frame_ <= k.to) return true;
+    for (auto& k : script_) if (k.sc == sc && frame_ >= k.from && frame_ <= k.to) {
+      if (!k.seen && k.t.time_since_epoch().count()) {   // input latency: key active (update step) -> read by a brain tick
+        k.seen = true;
+        latMs_.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - k.t).count());
+      }
+      return true;
+    }
     const Input& in = plat_->input();
     switch (sc) {
       case 29: return in.held(Action::Action2) || in.held(Action::Jump);
@@ -386,6 +424,10 @@ class RollerGame : public Game, public HostSink, public HostInput {
           const Vec3& p = md.positions[i];
           float ang = std::atan2(dot(p, xa), dot(p, dir)) / (2 * kPi);
           float h = dot(p, up);
+          if (cylAxisIsDir_) {   // axis = dir (game Y for every cylinder case 1..4)
+            ang = std::atan2(dot(p, xa), dot(p, up)) / (2 * kPi);
+            h = dot(p, dir);
+          }
           if (type == 3) md.uvs[i] = {ang, h * -k + ov};
           else { float r = std::sqrt(dot(p, p)); md.uvs[i] = {ang, (r > 1e-6f ? std::asin(std::max(-1.f, std::min(1.f, h / r))) / kPi : 0.f) + 0.5f}; }
         }
@@ -560,6 +602,11 @@ class RollerGame : public Game, public HostSink, public HostInput {
   Color bg_{0, 0, 0, 1};
   float field_ = 0.9375f;
   bool fieldFixed_ = false;
+  std::chrono::steady_clock::time_point t0_{}, lastRender_{};
+  std::vector<double> frameMs_, latMs_;
+  double runSeconds_ = std::getenv("RB_RUNSECS") ? std::atof(std::getenv("RB_RUNSECS")) : 0;
+  bool statsDone_ = false;
+  bool cylAxisIsDir_ = std::getenv("RB_CYLUP") == nullptr;   // cylinders wrap around dir (game Y): checked on the alien/player faces
   long frame_ = 0;
   bool pendingExit_ = false, paused_ = false;
   std::vector<int> levels_;
