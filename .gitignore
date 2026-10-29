@@ -1,0 +1,9 @@
+game/
+.game/
+build*/
+.shots/
+*.iso
+*.cab
+*.pcx
+*.x
+*.dat
