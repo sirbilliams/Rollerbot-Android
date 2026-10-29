@@ -80,6 +80,8 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
 
     private void refresh() {
         boolean have = GameImporter.findGameRoot(this) != null;
+        boolean[] inst = GameImporter.installed(this);
+        int active = GameImporter.activeLang(this);
         SaveInfo s = SaveInfo.read(SaveInfo.dir(this));
         PortPrefs.setReached(this, s.reached);
         int[] all = levels(), play = playable(all, s);
@@ -96,13 +98,12 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
             pr.add(new LauncherView.Row(s.lastLevel > 1 ? "Continue" : "Start game", s.lastLevel > 1 ? "Level " + s.lastLevel : "from the title", true, false));
             pr.add(new LauncherView.Row("New game", "from the title", true, false));
             pr.add(new LauncherView.Row("Play level", String.valueOf(shown), play.length > 0, true));
+            if (!inst[PortPrefs.lang(this)]) pr.add(new LauncherView.Row("Import " + PortPrefs.LANG_LABELS[PortPrefs.lang(this)] + " from your disc", "", true, false));
         } else {
             pr.add(new LauncherView.Row("Import your game first", "", false, false));
         }
         view.setRows(0, pr.toArray(new LauncherView.Row[0]));
-        boolean[] inst = GameImporter.installed(this);
-        int active = GameImporter.activeLang(this);
-        view.setLines(0, have ? "Play" : "Welcome", have ? new String[] { "Language: " + PortPrefs.LANG_LABELS[active] + " (change in Settings)" } : new String[] { "No game imported yet. Choose Import and bring your own disc." });
+        view.setLines(0, have ? "Play" : "Welcome", have ? playLines(inst, active) : new String[] { "No game imported yet. Choose Import and bring your own disc." });
 
         view.setLines(1, "Import your game",
                 have ? "Game found. Importing again replaces it." : "Pick the folder of your disc, or an image (.iso, .bin) or a .zip.",
@@ -127,6 +128,15 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
         view.setRows(3, new LauncherView.Row[0]);
     }
 
+    /** What the Play page says about the language: the set that will run (detected from its files), and a note when the chosen one is missing. */
+    private String[] playLines(boolean[] inst, int active) {
+        File root = GameImporter.findGameRoot(this);
+        String det = root != null ? GameImporter.detectLang(root) : null;
+        String shown = det != null ? PortPrefs.LANG_LABELS[LangSets.index(det)] + " (detected)" : PortPrefs.LANG_LABELS[active] + " (unverified)";
+        int want = PortPrefs.lang(this);
+        if (!inst[want]) return new String[] { "Language: " + shown, PortPrefs.LANG_LABELS[want] + " isn't installed: import your disc again to get it." };
+        return new String[] { "Language: " + shown + "  (change in Settings)" };
+    }
     private static int countOf(boolean[] b) { int n = 0; for (boolean x : b) if (x) n++; return n; }
     private static int indexOf(int[] a, int v) { for (int i = 0; i < a.length; i++) if (a[i] == v) return i; return 0; }
     private String version() {
@@ -142,6 +152,7 @@ public class SetupActivity extends Activity implements LauncherView.Actions {
             if (row == 0) play(s.lastLevel > 1 ? s.lastLevel : 0);
             else if (row == 1) play(0);
             else if (row == 2 && play.length > 0) play(play[Math.min(pick, play.length - 1)]);
+            else if (row == 3) pickSource(REQ_TREE);       // the chosen language isn't installed: import the disc again
         } else if (page == 1) {
             if (row == 0) pickSource(REQ_TREE);
             else if (row == 1) pickSource(REQ_FILE);

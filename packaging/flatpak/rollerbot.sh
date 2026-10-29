@@ -13,6 +13,30 @@ find_root() {   # print the dir under $1 holding Rollerbot.exe (case-insensitive
     find "$1" -maxdepth 4 -iname rollerbot.exe 2>/dev/null | head -n 1 | xargs -r -d '\n' dirname
 }
 
+# A set's language comes from its files (the loading screens: load1.pcx = english, load1f/g/s/i.pcx = french/german/spanish/italian),
+# never from a folder name: detect_lang <dir> prints it (nothing when unknown).
+detect_lang() {
+    n=$(find "$1" -maxdepth 4 -type f -iname 'load[1-9][fgsi].pcx' 2>/dev/null | head -n 1 | xargs -r -d '\n' basename | tr 'A-Z' 'a-z')
+    case "$n" in
+        load?f.pcx) echo french; return ;; load?g.pcx) echo german; return ;;
+        load?s.pcx) echo spanish; return ;; load?i.pcx) echo italian; return ;;
+    esac
+    [ -n "$(find "$1" -maxdepth 4 -type f -iname 'load[1-9].pcx' 2>/dev/null | head -n 1)" ] && echo english
+}
+
+# game/<lang>/ must really be <lang>: move a mislabelled set to its real slot (a duplicate of a right one is dropped).
+repair_labels() {
+    for l in $LANGS; do
+        [ -d "$DATA/$l" ] || continue
+        d=$(detect_lang "$DATA/$l")
+        if [ -n "$d" ] && [ "$d" != "$l" ]; then
+            echo "language set in $l is really $d: relabelled" >&2
+            if [ -e "$DATA/$d" ]; then rm -rf "$DATA/$l"; else mv "$DATA/$l" "$DATA/$d"; fi
+        fi
+    done
+    echo "Rollerbot: language sets: $(for l in $LANGS; do [ -d "$DATA/$l" ] && echo "$l=$(detect_lang "$DATA/$l" || true)"; done | tr '\n' ' ')" >&2
+}
+
 # The installed game is $DATA/<language>/ (a whole game per language). The language: RB_LANG (rollerbot.conf), default english.
 lang_root() { find_root "$DATA/$1"; }
 
@@ -30,8 +54,11 @@ import_dir() {   # import_dir <folder> <language>: every CodeAndData(<language>)
     if [ -z "$have" ]; then      # a plain game folder: the chosen language's set
         root=$(find_root "$src")
         [ -n "$root" ] || { echo "No Rollerbot.exe found under $src" >&2; return 1; }
-        mkdir -p "$DATA/$want" && cp -r "$root"/. "$DATA/$want"/ && echo "Imported $root as $want"
-        return $?
+        real=$(detect_lang "$root"); [ -n "$real" ] || real="$want"
+        mkdir -p "$DATA/$real" && cp -r "$root"/. "$DATA/$real"/ || return 1
+        echo "Imported $root as $real"
+        [ "$real" = "$want" ] || { echo "That folder is $real, not $want." >&2; return 1; }
+        return 0
     fi
     echo "Imported:$have"
     case "$have " in *" $want "*) ;; *) echo "$want isn't in that source (it has:$have); pick one with RB_LANG in rollerbot.conf." >&2; return 1 ;; esac
@@ -43,6 +70,7 @@ if [ "$1" = "--import" ]; then
     import_dir "$2" "$lang"; exit $?
 fi
 
+[ -d "$DATA" ] && repair_labels
 LANG_WANT="${RB_LANG:-english}"
 if [ -z "$(lang_root "$LANG_WANT")" ] && [ -z "$(find_root "$DATA")" ]; then
     path=""

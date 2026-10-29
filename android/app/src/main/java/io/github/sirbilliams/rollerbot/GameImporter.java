@@ -46,12 +46,70 @@ final class GameImporter {
         return new File(base, "game");
     }
 
+    /** Set false when the files change (import, remove): the next installed() re-checks every set's language. */
+    static volatile boolean verified;
+
+    /** The language of the set whose game root is root, from its files (LangSets.detect), or null. */
+    static String detectLang(File root) {
+        List<String> names = new ArrayList<>();
+        collect(root, 0, names);
+        return LangSets.detect(names);
+    }
+    private static void collect(File d, int depth, List<String> out) {
+        File[] k = d.listFiles();
+        if (k == null) return;
+        for (File f : k) { if (f.isDirectory()) { if (depth < 2) collect(f, depth + 1, out); } else out.add(f.getName()); }
+    }
+
+    /**
+     * game/<lang>/ must really be <lang>: a set is labelled by what its files say, never by its folder or the settings.
+     * A mislabelled set (an old import that took Spanish into game/english) is moved to its real slot; a duplicate of a
+     * set that is already right is dropped. One log line lists what is installed.
+     */
+    private static void repairLabels(Context c) {
+        File g = gameDir(c);
+        int n = PortPrefs.LANG_DIRS.length;
+        String[] real = new String[n];
+        File[] roots = new File[n];
+        for (int i = 0; i < n; i++) {
+            roots[i] = find(langDir(c, i), 0);
+            if (roots[i] != null) real[i] = detectLang(roots[i]);
+        }
+        File tmp = new File(c.getCacheDir(), "relabel");
+        deleteTree(tmp);
+        boolean moved = false;
+        for (int i = 0; i < n; i++) {                       // lift every mislabelled set out first
+            if (roots[i] == null || real[i] == null || real[i].equals(LangSets.DIRS[i])) continue;
+            File lifted = new File(tmp, String.valueOf(i));
+            lifted.getParentFile().mkdirs();
+            if (langDir(c, i).renameTo(lifted)) { moved = true; android.util.Log.w("Rollerbot", "language set in game/" + LangSets.DIRS[i] + " is really " + real[i] + ": relabelled"); }
+            else real[i] = LangSets.DIRS[i];
+        }
+        if (moved) {
+            for (int i = 0; i < n; i++) {
+                File lifted = new File(tmp, String.valueOf(i));
+                if (!lifted.exists()) continue;
+                File to = langDir(c, LangSets.index(real[i]));
+                if (to.exists()) deleteTree(lifted); else { g.mkdirs(); if (!lifted.renameTo(to)) deleteTree(lifted); }
+            }
+            deleteTree(tmp);
+        }
+        StringBuilder sb = new StringBuilder("language sets:");
+        for (int i = 0; i < n; i++) {
+            File r = find(langDir(c, i), 0);
+            if (r == null) continue;
+            String d = detectLang(r);
+            sb.append(' ').append(PortPrefs.LANG_LABELS[i]).append('=').append(LangSets.DIRS[i]).append(d != null ? "(detected)" : "(unverified)");
+        }
+        android.util.Log.i("Rollerbot", sb.toString());
+    }
+
     /** files/game/<language>/: one whole game per language set the source had (english, french, ...). */
     static File langDir(Context c, int lang) { return new File(gameDir(c), PortPrefs.LANG_DIRS[lang]); }
 
     /** Which languages are installed (index = PortPrefs.LANG_DIRS). Moves a pre-language install (files/game/...) into its set first. */
     static boolean[] installed(Context c) {
-        migrateLegacy(c);
+        if (!verified) { migrateLegacy(c); repairLabels(c); verified = true; }
         boolean[] b = new boolean[PortPrefs.LANG_DIRS.length];
         for (int i = 0; i < b.length; i++) b[i] = find(langDir(c, i), 0) != null;
         return b;
@@ -67,7 +125,8 @@ final class GameImporter {
         for (File k : kids) if (k.isDirectory() && (LangSets.index(k.getName()) >= 0 || k.getName().equals(".plain"))) return;   // already the new layout
         File root = find(g, 0);
         if (root == null) return;
-        String l = LangSets.langOfDirName(root.getName());
+        String l = detectLang(root);                          // from the files; folder name / setting only when they say nothing
+        if (l == null) l = LangSets.langOfDirName(root.getName());
         int i = l != null ? LangSets.index(l) : PortPrefs.lang(c);
         File tmp = new File(c.getCacheDir(), "legacy-game");
         deleteTree(tmp);
@@ -93,6 +152,7 @@ final class GameImporter {
 
     /** Returns null on success, else a message for the player. */
     static String importFile(Context c, Uri uri, int lang, Progress p) {
+        verified = false;
         ContentResolver cr = c.getContentResolver();
         String name = displayName(cr, uri).toLowerCase();
         if (name.endsWith(".cue"))
@@ -188,6 +248,7 @@ final class GameImporter {
     }
 
     static String importTree(Context c, Uri tree, int lang, Progress p) {
+        verified = false;
         ContentResolver cr = c.getContentResolver();
         try {
             List<Doc> all = new ArrayList<>();
@@ -288,7 +349,7 @@ final class GameImporter {
         return u.getLastPathSegment() == null ? "" : u.getLastPathSegment();
     }
 
-    static void deleteGame(Context c) { deleteTree(gameDir(c)); }
+    static void deleteGame(Context c) { deleteTree(gameDir(c)); verified = false; }
 
     static void deleteTree(File f) {
         File[] k = f.listFiles();
