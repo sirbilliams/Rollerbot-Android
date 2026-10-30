@@ -3,25 +3,26 @@
 A fan reconstruction of *Rollerbot: A Time Journey* (2000, 3D Rad engine) for the AYN Thor (dual screen,
 gamepad) and Linux (Flatpak). Original code only: no game files, art or decompiled code are in this repo.
 
-**Legal:** bring your own disc. You must own the game; the app imports it from your own copy (a zip or a
-folder of its files). Not affiliated with or endorsed by the rights holders.
-
 ## Status
 
-**About 55% (October 2026).** The game runs from your own disc's data in this rebuild:
+**Status: about 85%.**
+- All 14 levels run successfully.
+- Menus organized into Play, Game files, and Settings sections.
+- Dual-screen main menu with level grid on bottom screen.
+- Android emulator smoke tests pass; not yet confirmed on a real Thor.
 
-- All 14 levels load and run (title, 10 worlds, bonus rounds, the finale), with the original sky, fog,
-  textures and HUD (score, lives, timer, hi-score, apples).
 - Gameplay from the original scripts: rolling, pickups, enemies, lives, level exits carrying score and lives on.
 - Widescreen modes for 16:9 (Fill, Side panels, Stretch, Off); the HUD stays whole in each.
 - Android APK for the AYN Thor: imports straight from your disc (EN/FR/DE/ES/IT), gamepad, bottom-screen
-  panel (status, level select, settings), pauses when the lid closes. Not yet tested on a device.
+  panel (status, level select, settings), pauses when the lid closes.
 - Linux Flatpak builds and runs.
 
 - High score and progress persist between sessions; pause menu (Esc / Start): resume, restart, level, screen, quit.
-- New code-drawn Android launcher and bottom-screen panel (docs/launcher.md).
 
 Next: device testing on the Thor and full playthroughs of every level.
+
+**Legal:** bring your own disc. You must own the game; the app imports it from your own copy (a zip or a
+folder of its files). Not affiliated with or endorsed by the rights holders.
 
 ![Level 3 at 1920x1080](docs/screenshots/level3-desert.jpg)
 
